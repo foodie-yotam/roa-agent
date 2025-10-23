@@ -18,9 +18,11 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # LLM setup with Gemini
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyAPxogxsFokL6Ty0mmlIn3YuP3-AtKSd5U")
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-exp",
+    model="gemini-1.5-flash",
     google_api_key=GOOGLE_API_KEY,
-    temperature=0
+    temperature=0,
+    timeout=30,
+    max_retries=2
 )
 
 # ========== RECIPE CRUD ==========
