@@ -23,69 +23,213 @@ llm = ChatGoogleGenerativeAI(
     temperature=0
 )
 
-# Database query tools
-def get_all_users() -> str:
-    """Get all users in the system."""
+# ========== RECIPE CRUD ==========
+def get_all_recipes() -> str:
+    """Get all recipes available."""
     try:
-        result = supabase.table("users").select("*").execute()
-        return f"Users: {result.data}"
+        result = supabase.table("recipes").select("*").execute()
+        return f"Recipes: {result.data}"
     except Exception as e:
         return f"Error: {str(e)}"
 
+def create_recipe(recipe_name: str, directions: str, kitchen_id: str, category_id: str = None) -> str:
+    """Create a new recipe."""
+    try:
+        result = supabase.table("recipes").insert({
+            "recipe_name": recipe_name,
+            "directions": directions,
+            "kitchen_id": kitchen_id,
+            "category_id": category_id
+        }).execute()
+        return f"Recipe created: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def update_recipe(recipe_id: str, recipe_name: str = None, directions: str = None) -> str:
+    """Update an existing recipe."""
+    try:
+        updates = {}
+        if recipe_name: updates["recipe_name"] = recipe_name
+        if directions: updates["directions"] = directions
+        result = supabase.table("recipes").update(updates).eq("recipe_id", recipe_id).execute()
+        return f"Recipe updated: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def delete_recipe(recipe_id: str) -> str:
+    """Delete a recipe."""
+    try:
+        result = supabase.table("recipes").delete().eq("recipe_id", recipe_id).execute()
+        return f"Recipe deleted"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ========== COMPONENT CRUD ==========
+def get_all_components() -> str:
+    """Get all ingredients and tools."""
+    try:
+        result = supabase.table("components").select("*").execute()
+        return f"Components: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def create_component(name: str, component_type: str, kitchen_id: str) -> str:
+    """Create a new ingredient or tool. component_type must be 'ingredient' or 'tool'."""
+    try:
+        result = supabase.table("components").insert({
+            "name": name,
+            "component_type": component_type,
+            "kitchen_id": kitchen_id
+        }).execute()
+        return f"Component created: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def update_component(component_id: str, name: str = None) -> str:
+    """Update a component name."""
+    try:
+        updates = {}
+        if name: updates["name"] = name
+        result = supabase.table("components").update(updates).eq("component_id", component_id).execute()
+        return f"Component updated: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def delete_component(component_id: str) -> str:
+    """Delete a component."""
+    try:
+        result = supabase.table("components").delete().eq("component_id", component_id).execute()
+        return f"Component deleted"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ========== CATEGORY CRUD ==========
+def get_all_categories() -> str:
+    """Get all recipe categories."""
+    try:
+        result = supabase.table("categories").select("*").execute()
+        return f"Categories: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def create_category(name: str, kitchen_id: str) -> str:
+    """Create a new recipe category."""
+    try:
+        result = supabase.table("categories").insert({
+            "name": name,
+            "kitchen_id": kitchen_id
+        }).execute()
+        return f"Category created: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def update_category(category_id: str, name: str) -> str:
+    """Update a category name."""
+    try:
+        result = supabase.table("categories").update({"name": name}).eq("category_id", category_id).execute()
+        return f"Category updated: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def delete_category(category_id: str) -> str:
+    """Delete a category."""
+    try:
+        result = supabase.table("categories").delete().eq("category_id", category_id).execute()
+        return f"Category deleted"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# ========== KITCHEN CRUD ==========
 def get_all_kitchens() -> str:
-    """Get all kitchens in the system."""
+    """Get all kitchens."""
     try:
         result = supabase.table("kitchen").select("*").execute()
         return f"Kitchens: {result.data}"
     except Exception as e:
         return f"Error: {str(e)}"
 
-def get_all_recipes() -> str:
-    """Get all recipes available."""
+def create_kitchen(name: str, kitchen_type: str) -> str:
+    """Create a new kitchen."""
     try:
-        result = supabase.table("recipes").select("recipe_name, directions").execute()
-        return f"Recipes: {result.data}"
+        result = supabase.table("kitchen").insert({
+            "name": name,
+            "type": kitchen_type
+        }).execute()
+        return f"Kitchen created: {result.data}"
     except Exception as e:
         return f"Error: {str(e)}"
 
-def get_all_ingredients() -> str:
-    """Get all ingredients/components available."""
+def update_kitchen(kitchen_id: str, name: str = None, kitchen_type: str = None) -> str:
+    """Update kitchen details."""
     try:
-        result = supabase.table("components").select("name, component_type").execute()
-        return f"Components: {result.data}"
+        updates = {}
+        if name: updates["name"] = name
+        if kitchen_type: updates["type"] = kitchen_type
+        result = supabase.table("kitchen").update(updates).eq("kitchen_id", kitchen_id).execute()
+        return f"Kitchen updated: {result.data}"
     except Exception as e:
         return f"Error: {str(e)}"
 
-def get_recipe_details(recipe_name: str) -> str:
-    """
-    Get details for a specific recipe including ingredients.
-    
-    Args:
-        recipe_name: Name of the recipe to look up
-    """
+def delete_kitchen(kitchen_id: str) -> str:
+    """Delete a kitchen."""
     try:
-        recipe = supabase.table("recipes").select("*").ilike("recipe_name", f"%{recipe_name}%").execute()
-        if not recipe.data:
-            return f"Recipe '{recipe_name}' not found"
-        
-        recipe_id = recipe.data[0]['recipe_id']
-        ingredients = supabase.table("recipe_components").select("amount, unit, component_id").eq("recipe_id", recipe_id).execute()
-        
-        result_text = f"Recipe: {recipe.data[0]['recipe_name']}\n"
-        result_text += f"Directions: {recipe.data[0]['directions']}\n"
-        result_text += "Ingredients:\n"
-        
-        for ing in ingredients.data:
-            comp = supabase.table("components").select("name").eq("component_id", ing['component_id']).execute()
-            if comp.data:
-                result_text += f"  - {ing['amount']} {ing['unit']} {comp.data[0]['name']}\n"
-        
-        return result_text
+        result = supabase.table("kitchen").delete().eq("kitchen_id", kitchen_id).execute()
+        return f"Kitchen deleted"
     except Exception as e:
         return f"Error: {str(e)}"
 
-# Create tools list
-tools = [get_all_users, get_all_kitchens, get_all_recipes, get_all_ingredients, get_recipe_details]
+# ========== USER CRUD ==========
+def get_all_users() -> str:
+    """Get all users."""
+    try:
+        result = supabase.table("users").select("*").execute()
+        return f"Users: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def create_user(fullname: str, email: str) -> str:
+    """Create a new user."""
+    try:
+        result = supabase.table("users").insert({
+            "user_fullname": fullname,
+            "user_email": email
+        }).execute()
+        return f"User created: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def update_user(user_id: str, fullname: str = None, email: str = None) -> str:
+    """Update user details."""
+    try:
+        updates = {}
+        if fullname: updates["user_fullname"] = fullname
+        if email: updates["user_email"] = email
+        result = supabase.table("users").update(updates).eq("user_id", user_id).execute()
+        return f"User updated: {result.data}"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def delete_user(user_id: str) -> str:
+    """Delete a user."""
+    try:
+        result = supabase.table("users").delete().eq("user_id", user_id).execute()
+        return f"User deleted"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+# Create tools list with all CRUD operations
+tools = [
+    # Recipe CRUD
+    get_all_recipes, create_recipe, update_recipe, delete_recipe,
+    # Component CRUD
+    get_all_components, create_component, update_component, delete_component,
+    # Category CRUD
+    get_all_categories, create_category, update_category, delete_category,
+    # Kitchen CRUD
+    get_all_kitchens, create_kitchen, update_kitchen, delete_kitchen,
+    # User CRUD
+    get_all_users, create_user, update_user, delete_user
+]
 
 # Bind tools to LLM
 llm_with_tools = llm.bind_tools(tools)
