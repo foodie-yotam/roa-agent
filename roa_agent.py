@@ -23,6 +23,17 @@ llm = ChatGoogleGenerativeAI(
     temperature=0
 )
 
+# ========== HELPER FUNCTIONS ==========
+def get_kitchen_id_by_name(kitchen_name: str) -> str:
+    """Get kitchen_id from kitchen name."""
+    try:
+        result = supabase.table("kitchen").select("kitchen_id").eq("name", kitchen_name).execute()
+        if result.data and len(result.data) > 0:
+            return result.data[0]["kitchen_id"]
+        return None
+    except Exception as e:
+        return None
+
 # ========== RECIPE CRUD ==========
 def get_all_recipes() -> str:
     """Get all recipes available."""
@@ -32,16 +43,21 @@ def get_all_recipes() -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-def create_recipe(recipe_name: str, directions: str, kitchen_id: str, category_id: str = None) -> str:
-    """Create a new recipe."""
+def create_recipe(recipe_name: str, directions: str, kitchen_name: str, category_id: str = None) -> str:
+    """Create a new recipe. Use the kitchen name (e.g. 'Yotam's Kitchen') instead of kitchen_id."""
     try:
+        # Get kitchen_id from kitchen name
+        kitchen_id = get_kitchen_id_by_name(kitchen_name)
+        if not kitchen_id:
+            return f"Error: Kitchen '{kitchen_name}' not found. Available kitchens: {get_all_kitchens()}"
+        
         result = supabase.table("recipes").insert({
             "recipe_name": recipe_name,
             "directions": directions,
             "kitchen_id": kitchen_id,
             "category_id": category_id
         }).execute()
-        return f"Recipe created: {result.data}"
+        return f"Recipe created successfully in kitchen '{kitchen_name}': {result.data}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -73,15 +89,20 @@ def get_all_components() -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-def create_component(name: str, component_type: str, kitchen_id: str) -> str:
-    """Create a new ingredient or tool. component_type must be 'ingredient' or 'tool'."""
+def create_component(name: str, component_type: str, kitchen_name: str) -> str:
+    """Create a new ingredient or tool. component_type must be 'ingredient' or 'tool'. Use kitchen name instead of ID."""
     try:
+        # Get kitchen_id from kitchen name
+        kitchen_id = get_kitchen_id_by_name(kitchen_name)
+        if not kitchen_id:
+            return f"Error: Kitchen '{kitchen_name}' not found. Available kitchens: {get_all_kitchens()}"
+        
         result = supabase.table("components").insert({
             "name": name,
             "component_type": component_type,
             "kitchen_id": kitchen_id
         }).execute()
-        return f"Component created: {result.data}"
+        return f"Component created in kitchen '{kitchen_name}': {result.data}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -112,14 +133,19 @@ def get_all_categories() -> str:
     except Exception as e:
         return f"Error: {str(e)}"
 
-def create_category(name: str, kitchen_id: str) -> str:
-    """Create a new recipe category."""
+def create_category(name: str, kitchen_name: str) -> str:
+    """Create a new recipe category. Use kitchen name instead of ID."""
     try:
+        # Get kitchen_id from kitchen name
+        kitchen_id = get_kitchen_id_by_name(kitchen_name)
+        if not kitchen_id:
+            return f"Error: Kitchen '{kitchen_name}' not found. Available kitchens: {get_all_kitchens()}"
+        
         result = supabase.table("categories").insert({
             "name": name,
             "kitchen_id": kitchen_id
         }).execute()
-        return f"Category created: {result.data}"
+        return f"Category created in kitchen '{kitchen_name}': {result.data}"
     except Exception as e:
         return f"Error: {str(e)}"
 
