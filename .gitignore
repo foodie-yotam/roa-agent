@@ -1,0 +1,11 @@
+# Ignore environment files
+.env
+
+# Ignore local LangGraph runtime cache
+.langgraph_api/
+
+# Ignore Python cache
+__pycache__/
+
+# Ignore temporary trash folder
+trash/
