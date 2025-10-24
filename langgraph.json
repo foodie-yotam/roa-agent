@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent": "./roa_agent.py:agent"
+    "agent": "./roa_agent_v2.py:agent"
   },
   "env": ".env",
   "python_version": "3.11"
