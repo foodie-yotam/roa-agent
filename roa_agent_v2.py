@@ -31,8 +31,9 @@ driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 # LLM setup
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyAPxogxsFokL6Ty0mmlIn3YuP3-AtKSd5U")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash",
+    model=GEMINI_MODEL,
     google_api_key=GOOGLE_API_KEY,
     temperature=0
 )
