@@ -328,6 +328,31 @@ def list_ingredients(kitchen_name: Optional[str] = None, search_term: Optional[s
         return f"Error listing ingredients: {str(e)}"
 
 
+def list_kitchens() -> str:
+    """
+    List all available kitchens in the system.
+    Use this when users ask what kitchens are available or when searching for recipes fails.
+    
+    Returns:
+        List of all kitchens with their names and types
+    """
+    try:
+        query = """
+        MATCH (k:Kitchen)
+        RETURN k.name as name, k.type as type
+        ORDER BY k.name
+        """
+        results = run_query(query)
+        
+        if not results:
+            return "No kitchens found in the system."
+        
+        kitchen_names = [r['name'] for r in results]
+        return f"Found {len(results)} kitchen(s): {', '.join(kitchen_names)}. Full details: {results}"
+    except Exception as e:
+        return f"Error listing kitchens: {str(e)}"
+
+
 def _build_tool_registry(tool_functions: List):
     """Create a mapping from tool name to callable."""
     registry: Dict[str, callable] = {}
@@ -339,13 +364,14 @@ def _build_tool_registry(tool_functions: List):
     return registry
 
 
-# Create tools list (5 core tools)
+# Create tools list (6 core tools)
 tools = [
     search_recipes,
     get_recipe_details,
     create_recipe,
     add_ingredient_to_recipe,
-    list_ingredients
+    list_ingredients,
+    list_kitchens
 ]
 
 # Tool registry for direct invocation
@@ -360,6 +386,7 @@ SYSTEM_PROMPT = """You are ROA, an AI culinary assistant for professional kitche
 Your role is to help chefs manage recipes, ingredients, and kitchen operations efficiently.
 
 Key capabilities:
+- List all available kitchens in the system
 - Search and retrieve recipes
 - Get detailed recipe information including ingredients and sub-recipes
 - Create new recipes with directions
@@ -369,6 +396,7 @@ Key capabilities:
 Always be concise and professional. When a chef asks for a recipe, provide clear, actionable information.
 If they want to create or modify recipes, guide them through the process step by step.
 
+IMPORTANT: If a user asks about recipes but you're unsure which kitchen to search, use list_kitchens() first to show available kitchens.
 For recipe searches, if no kitchen is specified, search across all kitchens.
 Always confirm successful actions with a brief, clear message."""
 
