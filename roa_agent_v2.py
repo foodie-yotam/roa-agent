@@ -328,6 +328,364 @@ def list_ingredients(kitchen_name: Optional[str] = None, search_term: Optional[s
         return f"Error listing ingredients: {str(e)}"
 
 
+# ========== ADVANCED CRUD TOOLS ==========
+
+def create_kitchen(kitchen_name: str, kitchen_type: str = "restaurant") -> str:
+    """
+    Create a new kitchen in the system.
+    
+    Args:
+        kitchen_name: Name of the kitchen (e.g. "Staging Test Kitchen")
+        kitchen_type: Type of kitchen (optional, e.g. "restaurant", "test", "catering")
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        query = """
+        CREATE (k:Kitchen {
+            kitchen_id: randomUUID(),
+            name: $name,
+            type: $type
+        })
+        RETURN k.name as name, k.type as type
+        """
+        results = run_query(query, {"name": kitchen_name, "type": kitchen_type})
+        return f"✅ Kitchen '{kitchen_name}' created (type: {kitchen_type})!"
+    except Exception as e:
+        return f"Error creating kitchen: {str(e)}"
+
+
+def list_kitchens() -> str:
+    """
+    List all kitchens in the system.
+    
+    Returns:
+        List of all kitchens with their types
+    """
+    try:
+        query = """
+        MATCH (k:Kitchen)
+        RETURN k.name as name, k.type as type
+        ORDER BY k.name
+        """
+        results = run_query(query)
+        if not results:
+            return "No kitchens found. Create one with create_kitchen()."
+        return f"Found {len(results)} kitchen(s): {results}"
+    except Exception as e:
+        return f"Error listing kitchens: {str(e)}"
+
+
+def delete_kitchen(kitchen_name: str) -> str:
+    """
+    Delete a kitchen and all its associated data (recipes, categories, components).
+    
+    Args:
+        kitchen_name: Name of the kitchen to delete
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        query = """
+        MATCH (k:Kitchen {name: $name})
+        OPTIONAL MATCH (k)-[r]-()
+        DELETE r, k
+        RETURN count(k) as deleted
+        """
+        results = run_query(query, {"name": kitchen_name})
+        if results and results[0]["deleted"] > 0:
+            return f"✅ Kitchen '{kitchen_name}' and all its data deleted!"
+        return f"Kitchen '{kitchen_name}' not found."
+    except Exception as e:
+        return f"Error deleting kitchen: {str(e)}"
+
+
+def update_recipe(recipe_name: str, kitchen_name: str, 
+                  new_directions: Optional[List[str]] = None,
+                  new_time_minutes: Optional[int] = None,
+                  new_notes: Optional[str] = None) -> str:
+    """
+    Update an existing recipe's details.
+    
+    Args:
+        recipe_name: Name of the recipe to update
+        kitchen_name: Kitchen where the recipe exists
+        new_directions: New cooking directions (optional)
+        new_time_minutes: New cooking time (optional)
+        new_notes: New notes (optional)
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        updates = []
+        params = {"recipe_name": recipe_name, "kitchen_name": kitchen_name}
+        
+        if new_directions is not None:
+            updates.append("r.directions = $new_directions")
+            params["new_directions"] = new_directions
+        if new_time_minutes is not None:
+            updates.append("r.time_minutes = $new_time_minutes")
+            params["new_time_minutes"] = new_time_minutes
+        if new_notes is not None:
+            updates.append("r.notes = $new_notes")
+            params["new_notes"] = new_notes
+        
+        if not updates:
+            return "No updates provided. Specify at least one field to update."
+        
+        query = f"""
+        MATCH (k:Kitchen {{name: $kitchen_name}})-[:HAS_RECIPE]->(r:Recipe {{name: $recipe_name}})
+        SET {', '.join(updates)}
+        RETURN r.name as recipe
+        """
+        results = run_query(query, params)
+        
+        if not results:
+            return f"Recipe '{recipe_name}' not found in '{kitchen_name}'."
+        return f"✅ Recipe '{recipe_name}' updated successfully!"
+    except Exception as e:
+        return f"Error updating recipe: {str(e)}"
+
+
+def delete_recipe(recipe_name: str, kitchen_name: str) -> str:
+    """
+    Delete a recipe from a kitchen.
+    
+    Args:
+        recipe_name: Name of the recipe to delete
+        kitchen_name: Kitchen where the recipe exists
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        query = """
+        MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
+        OPTIONAL MATCH (r)-[rel]-()
+        DELETE rel, r
+        RETURN count(r) as deleted
+        """
+        results = run_query(query, {"recipe_name": recipe_name, "kitchen_name": kitchen_name})
+        if results and results[0]["deleted"] > 0:
+            return f"✅ Recipe '{recipe_name}' deleted from '{kitchen_name}'!"
+        return f"Recipe '{recipe_name}' not found in '{kitchen_name}'."
+    except Exception as e:
+        return f"Error deleting recipe: {str(e)}"
+
+
+def remove_ingredient_from_recipe(recipe_name: str, ingredient_name: str, 
+                                   kitchen_name: Optional[str] = None) -> str:
+    """
+    Remove an ingredient from a recipe.
+    
+    Args:
+        recipe_name: Name of the recipe
+        ingredient_name: Name of the ingredient to remove
+        kitchen_name: Kitchen name (optional)
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        if kitchen_name:
+            query = """
+            MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
+            MATCH (r)-[u:USES]->(c:Component {name: $ingredient_name})
+            DELETE u
+            RETURN r.name as recipe, c.name as ingredient
+            """
+            params = {"kitchen_name": kitchen_name, "recipe_name": recipe_name, "ingredient_name": ingredient_name}
+        else:
+            query = """
+            MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
+            MATCH (r)-[u:USES]->(c:Component {name: $ingredient_name})
+            DELETE u
+            RETURN r.name as recipe, c.name as ingredient
+            LIMIT 1
+            """
+            params = {"recipe_name": recipe_name, "ingredient_name": ingredient_name}
+        
+        results = run_query(query, params)
+        if not results:
+            return f"Ingredient '{ingredient_name}' not found in recipe '{recipe_name}'."
+        return f"✅ Removed {ingredient_name} from {recipe_name}!"
+    except Exception as e:
+        return f"Error removing ingredient: {str(e)}"
+
+
+def update_ingredient_amount(recipe_name: str, ingredient_name: str, 
+                             new_amount: float, new_unit: str,
+                             kitchen_name: Optional[str] = None) -> str:
+    """
+    Update the amount/unit of an ingredient in a recipe.
+    
+    Args:
+        recipe_name: Name of the recipe
+        ingredient_name: Name of the ingredient
+        new_amount: New amount
+        new_unit: New unit
+        kitchen_name: Kitchen name (optional)
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        if kitchen_name:
+            query = """
+            MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
+            MATCH (r)-[u:USES]->(c:Component {name: $ingredient_name})
+            SET u.amount = $new_amount, u.unit = $new_unit
+            RETURN r.name as recipe, c.name as ingredient, u.amount as amount, u.unit as unit
+            """
+            params = {
+                "kitchen_name": kitchen_name,
+                "recipe_name": recipe_name,
+                "ingredient_name": ingredient_name,
+                "new_amount": new_amount,
+                "new_unit": new_unit
+            }
+        else:
+            query = """
+            MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
+            MATCH (r)-[u:USES]->(c:Component {name: $ingredient_name})
+            SET u.amount = $new_amount, u.unit = $new_unit
+            RETURN r.name as recipe, c.name as ingredient, u.amount as amount, u.unit as unit
+            LIMIT 1
+            """
+            params = {
+                "recipe_name": recipe_name,
+                "ingredient_name": ingredient_name,
+                "new_amount": new_amount,
+                "new_unit": new_unit
+            }
+        
+        results = run_query(query, params)
+        if not results:
+            return f"Ingredient '{ingredient_name}' not found in recipe '{recipe_name}'."
+        return f"✅ Updated {ingredient_name} in {recipe_name} to {new_amount} {new_unit}!"
+    except Exception as e:
+        return f"Error updating ingredient amount: {str(e)}"
+
+
+def create_category(category_name: str, kitchen_name: str) -> str:
+    """
+    Create a new category in a kitchen.
+    
+    Args:
+        category_name: Name of the category (e.g. "Desserts", "Main Dishes")
+        kitchen_name: Kitchen to add the category to
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        query = """
+        MATCH (k:Kitchen {name: $kitchen_name})
+        MERGE (k)-[:HAS_CATEGORY]->(c:Category {name: $category_name})
+        ON CREATE SET c.category_id = randomUUID()
+        RETURN c.name as category
+        """
+        results = run_query(query, {"category_name": category_name, "kitchen_name": kitchen_name})
+        if not results:
+            return f"Kitchen '{kitchen_name}' not found."
+        return f"✅ Category '{category_name}' created in '{kitchen_name}'!"
+    except Exception as e:
+        return f"Error creating category: {str(e)}"
+
+
+def list_categories(kitchen_name: Optional[str] = None) -> str:
+    """
+    List all categories, optionally filtered by kitchen.
+    
+    Args:
+        kitchen_name: Filter by kitchen (optional)
+    
+    Returns:
+        List of categories
+    """
+    try:
+        if kitchen_name:
+            query = """
+            MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_CATEGORY]->(c:Category)
+            RETURN c.name as category
+            ORDER BY c.name
+            """
+            results = run_query(query, {"kitchen_name": kitchen_name})
+        else:
+            query = """
+            MATCH (c:Category)
+            RETURN c.name as category
+            ORDER BY c.name
+            """
+            results = run_query(query)
+        
+        if not results:
+            return "No categories found."
+        return f"Found {len(results)} categor{'y' if len(results) == 1 else 'ies'}: {results}"
+    except Exception as e:
+        return f"Error listing categories: {str(e)}"
+
+
+def assign_recipe_to_category(recipe_name: str, category_name: str, kitchen_name: str) -> str:
+    """
+    Assign a recipe to a category.
+    
+    Args:
+        recipe_name: Name of the recipe
+        category_name: Name of the category
+        kitchen_name: Kitchen where both exist
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        query = """
+        MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
+        MATCH (k)-[:HAS_CATEGORY]->(c:Category {name: $category_name})
+        MERGE (r)-[:IN_CATEGORY]->(c)
+        RETURN r.name as recipe, c.name as category
+        """
+        results = run_query(query, {
+            "recipe_name": recipe_name,
+            "category_name": category_name,
+            "kitchen_name": kitchen_name
+        })
+        if not results:
+            return f"Recipe '{recipe_name}' or category '{category_name}' not found in '{kitchen_name}'."
+        return f"✅ Recipe '{recipe_name}' assigned to category '{category_name}'!"
+    except Exception as e:
+        return f"Error assigning recipe to category: {str(e)}"
+
+
+def delete_component(component_name: str, kitchen_name: str) -> str:
+    """
+    Delete a component/ingredient from a kitchen (removes all recipe associations).
+    
+    Args:
+        component_name: Name of the component to delete
+        kitchen_name: Kitchen where the component exists
+    
+    Returns:
+        Confirmation message
+    """
+    try:
+        query = """
+        MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_COMPONENT]->(c:Component {name: $component_name})
+        OPTIONAL MATCH (c)-[r]-()
+        DELETE r, c
+        RETURN count(c) as deleted
+        """
+        results = run_query(query, {"component_name": component_name, "kitchen_name": kitchen_name})
+        if results and results[0]["deleted"] > 0:
+            return f"✅ Component '{component_name}' deleted from '{kitchen_name}'!"
+        return f"Component '{component_name}' not found in '{kitchen_name}'."
+    except Exception as e:
+        return f"Error deleting component: {str(e)}"
+
+
 def _build_tool_registry(tool_functions: List):
     """Create a mapping from tool name to callable."""
     registry: Dict[str, callable] = {}
@@ -339,13 +697,34 @@ def _build_tool_registry(tool_functions: List):
     return registry
 
 
-# Create tools list (5 core tools)
+# Create tools list (5 high-level + 13 advanced CRUD tools = 18 total)
 tools = [
+    # High-level tools (quick access)
     search_recipes,
     get_recipe_details,
     create_recipe,
     add_ingredient_to_recipe,
-    list_ingredients
+    list_ingredients,
+    
+    # Advanced CRUD tools
+    # Kitchen management
+    create_kitchen,
+    list_kitchens,
+    delete_kitchen,
+    
+    # Recipe management
+    update_recipe,
+    delete_recipe,
+    
+    # Ingredient/Component management
+    remove_ingredient_from_recipe,
+    update_ingredient_amount,
+    delete_component,
+    
+    # Category management
+    create_category,
+    list_categories,
+    assign_recipe_to_category,
 ]
 
 # Tool registry for direct invocation
@@ -360,11 +739,12 @@ SYSTEM_PROMPT = """You are ROA, an AI culinary assistant for professional kitche
 Your role is to help chefs manage recipes, ingredients, and kitchen operations efficiently.
 
 Key capabilities:
-- Search and retrieve recipes
-- Get detailed recipe information including ingredients and sub-recipes
-- Create new recipes with directions
-- Add ingredients to recipes
-- List available ingredients in the inventory
+- **Quick Access**: Search recipes, get details, create recipes, add ingredients, list inventory
+- **Kitchen Management**: Create, list, and delete kitchens
+- **Recipe Management**: Create, update, delete recipes and assign them to categories
+- **Ingredient Management**: Add, update amounts, remove ingredients from recipes
+- **Category Management**: Create categories, list them, and organize recipes
+- **Full CRUD**: Complete control over all kitchen data (kitchens, recipes, ingredients, categories)
 
 Always be concise and professional. When a chef asks for a recipe, provide clear, actionable information.
 If they want to create or modify recipes, guide them through the process step by step.
