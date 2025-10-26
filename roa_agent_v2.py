@@ -356,6 +356,61 @@ def list_kitchens() -> str:
         return f"Error listing kitchens: {str(e)}"
 
 
+def scale_ingredients(ingredients: List[dict]) -> str:
+    """
+    Scale recipe ingredients by a multiplier while preserving units.
+    Use this when chefs need to adjust recipe quantities (scale up/down for different batch sizes).
+    
+    Args:
+        ingredients: List of dicts with keys:
+            - ingredient (str): Name of the ingredient
+            - amount (float): Original quantity
+            - unit (str): Measurement unit (g, kg, cup, tbsp, etc.)
+            - scale (float): Multiplier (e.g., 2 for double, 0.5 for half)
+    
+    Returns:
+        JSON string with scaled ingredients: [{ingredient, result, unit}, ...]
+    
+    Example:
+        Input: [{"ingredient": "flour", "amount": 500, "unit": "g", "scale": 2}]
+        Output: [{"ingredient": "flour", "result": 1000, "unit": "g"}]
+    """
+    try:
+        if not ingredients or not isinstance(ingredients, list):
+            return "Error: ingredients must be a non-empty list"
+        
+        scaled_results = []
+        for item in ingredients:
+            # Validate required fields
+            if not all(k in item for k in ['ingredient', 'amount', 'unit', 'scale']):
+                return f"Error: Each ingredient must have 'ingredient', 'amount', 'unit', and 'scale' fields. Got: {item}"
+            
+            ingredient = item['ingredient']
+            amount = float(item['amount'])
+            unit = item['unit']
+            scale = float(item['scale'])
+            
+            # Calculate scaled amount
+            result = amount * scale
+            
+            # Round to reasonable precision (2 decimal places)
+            result = round(result, 2)
+            
+            scaled_results.append({
+                "ingredient": ingredient,
+                "result": result,
+                "unit": unit
+            })
+        
+        import json
+        return json.dumps(scaled_results, indent=2)
+    
+    except ValueError as e:
+        return f"Error: Invalid number format - {str(e)}"
+    except Exception as e:
+        return f"Error scaling ingredients: {str(e)}"
+
+
 def _build_tool_registry(tool_functions: List):
     """Create a mapping from tool name to callable."""
     registry: Dict[str, callable] = {}
@@ -367,14 +422,15 @@ def _build_tool_registry(tool_functions: List):
     return registry
 
 
-# Create tools list (6 core tools)
+# Create tools list (7 core tools)
 tools = [
     search_recipes,
     get_recipe_details,
     create_recipe,
     add_ingredient_to_recipe,
     list_ingredients,
-    list_kitchens
+    list_kitchens,
+    scale_ingredients
 ]
 
 # Tool registry for direct invocation
@@ -395,13 +451,16 @@ Key capabilities:
 - Create new recipes with directions
 - Add ingredients to recipes
 - List available ingredients in the inventory
+- Scale recipe ingredients (adjust quantities for different batch sizes)
 
 Always be concise and professional. When a chef asks for a recipe, provide clear, actionable information.
 If they want to create or modify recipes, guide them through the process step by step.
 
-IMPORTANT: If a user asks about recipes but you're unsure which kitchen to search, use list_kitchens() first to show available kitchens.
-For recipe searches, if no kitchen is specified, search across all kitchens.
-Always confirm successful actions with a brief, clear message."""
+IMPORTANT: 
+- If a user asks about recipes but you're unsure which kitchen to search, use list_kitchens() first to show available kitchens.
+- For recipe searches, if no kitchen is specified, search across all kitchens.
+- When scaling recipes, use scale_ingredients() to calculate adjusted quantities while preserving units.
+- Always confirm successful actions with a brief, clear message."""
 
 # Assistant node
 def assistant(state: MessagesState):
