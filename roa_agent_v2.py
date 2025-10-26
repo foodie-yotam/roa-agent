@@ -474,78 +474,79 @@ def assistant(state: MessagesState):
     return {"messages": [llm_with_tools.invoke(messages)]}
 
 
-def should_call_tools(state: MessagesState) -> str:
-    """Route to tool execution when the assistant requested a tool."""
+def route_tools(state: MessagesState) -> str:
+    """Route to specific tool or end based on assistant's decision."""
     messages = state["messages"]
     if not messages:
         return "end"
 
     last = messages[-1]
     if isinstance(last, AIMessage) and last.tool_calls:
-        return "tools"
+        # Return the name of the first tool to call
+        return last.tool_calls[0]["name"]
     return "end"
 
 
-def execute_tools(state: MessagesState):
-    """Execute requested tools and return ToolMessage responses."""
-    messages = state["messages"]
-    last = messages[-1]
-    tool_messages = []
-
-    if not isinstance(last, AIMessage) or not last.tool_calls:
+def create_tool_node(tool_func):
+    """Create a node function for a specific tool."""
+    def tool_node(state: MessagesState):
+        """Execute a specific tool and return ToolMessage response."""
+        messages = state["messages"]
+        last = messages[-1]
+        
+        if not isinstance(last, AIMessage) or not last.tool_calls:
+            return {"messages": []}
+        
+        # Find the tool call for this specific tool
+        tool_name = tool_func.__name__
+        for call in last.tool_calls:
+            if call.get("name") == tool_name:
+                tool_call_id = call.get("id")
+                args = call.get("args", {})
+                
+                try:
+                    result = tool_func(**args)
+                except Exception as exc:
+                    result = f"Error calling {tool_name}: {exc}"
+                
+                return {"messages": [
+                    ToolMessage(
+                        content=str(result),
+                        name=tool_name,
+                        tool_call_id=tool_call_id,
+                    )
+                ]}
+        
         return {"messages": []}
+    
+    return tool_node
 
-    for call in last.tool_calls:
-        tool_name = call.get("name")
-        tool = tool_registry.get(tool_name)
-        tool_call_id = call.get("id")
 
-        if tool is None:
-            tool_messages.append(
-                ToolMessage(
-                    content=f"Tool '{tool_name}' is not available.",
-                    name=tool_name or "unknown",
-                    tool_call_id=tool_call_id,
-                )
-            )
-            continue
-
-        args = call.get("args") or {}
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                args = {}
-
-        try:
-            result = tool(**args)
-        except TypeError as exc:
-            result = f"Error calling tool '{tool_name}': {exc}"
-
-        tool_messages.append(
-            ToolMessage(
-                content=str(result),
-                name=tool_name,
-                tool_call_id=tool_call_id,
-            )
-        )
-
-    return {"messages": tool_messages}
-
-# Build the graph
+# Build the graph with individual tool nodes
 builder = StateGraph(MessagesState)
 builder.add_node("assistant", assistant)
-builder.add_node("tools", execute_tools)
+
+# Add each tool as its own node
+for tool_func in tools:
+    tool_name = tool_func.__name__
+    builder.add_node(tool_name, create_tool_node(tool_func))
+
+# Start with assistant
 builder.add_edge(START, "assistant")
+
+# Route from assistant to specific tools or end
+tool_routes = {tool_func.__name__: tool_func.__name__ for tool_func in tools}
+tool_routes["end"] = END
+
 builder.add_conditional_edges(
     "assistant",
-    should_call_tools,
-    {
-        "tools": "tools",
-        "end": END,
-    },
+    route_tools,
+    tool_routes,
 )
-builder.add_edge("tools", "assistant")
+
+# All tools route back to assistant
+for tool_func in tools:
+    builder.add_edge(tool_func.__name__, "assistant")
 
 # Compile and export the graph
 agent = builder.compile()
