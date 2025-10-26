@@ -35,7 +35,10 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 llm = ChatGoogleGenerativeAI(
     model=GEMINI_MODEL,
     google_api_key=GOOGLE_API_KEY,
-    temperature=0
+    temperature=0,
+    # Add retry configuration for handling API overload
+    max_retries=3,  # Retry up to 3 times
+    timeout=60  # 60 second timeout per request
 )
 
 # ========== HELPER FUNCTIONS ==========
