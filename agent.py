@@ -118,14 +118,88 @@ def text_to_speech(text: str) -> str:
 
 # --- Video Tools ---
 @tool
-def show_recipe_video(recipes: List[str]) -> str:
-    """Display recipes in video format"""
-    return f"VIDEO: Showing {', '.join(recipes)}"
+def display_recipes(recipes: List[str]) -> str:
+    """Display recipe cards in visual format with React Flow.
+    
+    Args:
+        recipes: List of recipe names to display
+    
+    Returns:
+        JSON string with visualization command
+    """
+    import json
+    return json.dumps({
+        "tool": "display_recipes",
+        "params": {"recipes": recipes}
+    })
 
 @tool
-def show_scaling_animation(recipe: str, factor: int) -> str:
-    """Animate recipe scaling"""
-    return f"VIDEO: {recipe} scaled by {factor}x"
+def display_multiplication(recipe: str, factor: int) -> str:
+    """Show recipe scaling visualization with animated flow diagram.
+    
+    Args:
+        recipe: Recipe name to scale
+        factor: Multiplication factor (e.g., 3 for 3x)
+    
+    Returns:
+        JSON string with visualization command
+    """
+    import json
+    return json.dumps({
+        "tool": "display_multiplication",
+        "params": {"recipe": recipe, "factor": factor}
+    })
+
+@tool
+def display_prediction_graph(metric: str, days: int = 30) -> str:
+    """Display prediction/forecast trend graph.
+    
+    Args:
+        metric: Metric to forecast (e.g., "sales", "inventory")
+        days: Number of days to forecast
+    
+    Returns:
+        JSON string with visualization command
+    """
+    import json
+    return json.dumps({
+        "tool": "display_prediction_graph",
+        "params": {"metric": metric, "days": days}
+    })
+
+@tool
+def display_inventory_alert(item: str, quantity: int) -> str:
+    """Show low stock inventory alert visualization.
+    
+    Args:
+        item: Item name that's low in stock
+        quantity: Current quantity remaining
+    
+    Returns:
+        JSON string with visualization command
+    """
+    import json
+    return json.dumps({
+        "tool": "display_inventory_alert",
+        "params": {"item": item, "quantity": quantity}
+    })
+
+@tool
+def display_team_assignment(task: str, assignee: str) -> str:
+    """Show team task assignment visualization.
+    
+    Args:
+        task: Task description
+        assignee: Person assigned to the task
+    
+    Returns:
+        JSON string with visualization command
+    """
+    import json
+    return json.dumps({
+        "tool": "display_team_assignment",
+        "params": {"task": task, "assignee": assignee}
+    })
 
 # --- Marketing Tools ---
 @tool
@@ -223,9 +297,23 @@ def calculate_cost(recipe_name: str) -> str:
 # ========================================================================
 
 # Speaker team workers
-voice_agent = create_react_agent(llm, [generate_voice_response, text_to_speech])
-video_agent = create_react_agent(llm, [show_recipe_video, show_scaling_animation])
-marketing_agent = create_react_agent(llm, [create_marketing_content])
+voice_agent = create_react_agent(
+    llm, 
+    [generate_voice_response, text_to_speech],
+    prompt="You are the Voice Response Specialist. Generate clear voice-optimized responses."
+)
+
+video_agent = create_react_agent(
+    llm, 
+    [display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment],
+    prompt="You are the Video Visualization Specialist. Create visual displays using React Flow. Return visualization commands as JSON."
+)
+
+marketing_agent = create_react_agent(
+    llm, 
+    [create_marketing_content],
+    prompt="You are the Marketing Specialist. Create compelling marketing content."
+)
 
 # Builder team workers
 dev_tools_agent = create_react_agent(llm, [generate_tool_code])
