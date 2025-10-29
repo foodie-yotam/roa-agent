@@ -125,13 +125,14 @@ def display_recipes(recipes: List[str]) -> str:
         recipes: List of recipe names to display
     
     Returns:
-        JSON string with visualization command
+        Text response with embedded visualization JSON
     """
     import json
-    return json.dumps({
+    viz_json = json.dumps({
         "tool": "display_recipes",
         "params": {"recipes": recipes}
     })
+    return f"Here are the recipes: {', '.join(recipes)}. VISUALIZATION: {viz_json}"
 
 @tool
 def display_multiplication(recipe: str, factor: int) -> str:
@@ -142,13 +143,14 @@ def display_multiplication(recipe: str, factor: int) -> str:
         factor: Multiplication factor (e.g., 3 for 3x)
     
     Returns:
-        JSON string with visualization command
+        Text response with embedded visualization JSON
     """
     import json
-    return json.dumps({
+    viz_json = json.dumps({
         "tool": "display_multiplication",
         "params": {"recipe": recipe, "factor": factor}
     })
+    return f"I'll scale {recipe} by {factor}x. VISUALIZATION: {viz_json}"
 
 @tool
 def display_prediction_graph(metric: str, days: int = 30) -> str:
@@ -159,13 +161,14 @@ def display_prediction_graph(metric: str, days: int = 30) -> str:
         days: Number of days to forecast
     
     Returns:
-        JSON string with visualization command
+        Text response with embedded visualization JSON
     """
     import json
-    return json.dumps({
+    viz_json = json.dumps({
         "tool": "display_prediction_graph",
         "params": {"metric": metric, "days": days}
     })
+    return f"Here's the {metric} forecast for the next {days} days. VISUALIZATION: {viz_json}"
 
 @tool
 def display_inventory_alert(item: str, quantity: int) -> str:
@@ -176,13 +179,14 @@ def display_inventory_alert(item: str, quantity: int) -> str:
         quantity: Current quantity remaining
     
     Returns:
-        JSON string with visualization command
+        Text response with embedded visualization JSON
     """
     import json
-    return json.dumps({
+    viz_json = json.dumps({
         "tool": "display_inventory_alert",
         "params": {"item": item, "quantity": quantity}
     })
+    return f"⚠️ Low stock alert: {item} has only {quantity} units remaining. Please reorder soon. VISUALIZATION: {viz_json}"
 
 @tool
 def display_team_assignment(task: str, assignee: str) -> str:
@@ -193,13 +197,14 @@ def display_team_assignment(task: str, assignee: str) -> str:
         assignee: Person assigned to the task
     
     Returns:
-        JSON string with visualization command
+        Text response with embedded visualization JSON
     """
     import json
-    return json.dumps({
+    viz_json = json.dumps({
         "tool": "display_team_assignment",
         "params": {"task": task, "assignee": assignee}
     })
+    return f"I've assigned '{task}' to {assignee}. VISUALIZATION: {viz_json}"
 
 # --- Marketing Tools ---
 @tool
