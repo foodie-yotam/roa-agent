@@ -80,15 +80,54 @@ class State(MessagesState):
 def make_supervisor_node(llm, members: list[str]):
     """Create a supervisor node that routes to team members"""
     options = ["FINISH"] + members
-    system_prompt = (
-        f"You are a supervisor managing these workers: {members}. "
-        "Based on the conversation history and the user's request:\n"
-        "1. If a worker has already completed the task successfully, respond with FINISH\n"
-        "2. If the task requires a specific worker, route to that worker\n"
-        "3. IMPORTANT: Each worker should only be called ONCE per task unless explicitly needed again\n"
-        "4. Look at recent messages - if a worker just responded, the task is likely complete\n"
-        "Respond with the worker name to act next, or FINISH if done."
-    )
+    
+    # Build descriptions for each worker based on their name
+    worker_descriptions = {
+        # Speaker team agents
+        "voice": "Handles direct conversation with users. Returns natural text responses.",
+        "video": "Creates visual displays and React Flow visualizations.",
+        "marketing": "Generates marketing content and copy.",
+        # Kitchen team agents  
+        "recipe": "Searches and retrieves recipe information from database.",
+        "team_pm": "Manages kitchen team tasks and assignments.",
+        "dish_ideation": "Helps brainstorm and plan new dishes.",
+        # Inventory team agents
+        "stock": "Checks inventory levels and stock information.",
+        "suppliers": "Manages supplier information and ordering.",
+        "analysis": "Analyzes inventory trends and predictions.",
+        # Sales team agents
+        "profit": "Analyzes sales data and profitability.",
+        # Top-level teams
+        "speaker_team": "Handles user conversation, video displays, and marketing. Use for greetings, explanations, visualizations.",
+        "chef_team": "Handles ALL kitchen operations: recipes, ingredients, inventory, team management, sales. Use for food/cooking questions.",
+        "kitchen_team": "Manages recipes, team tasks, and dish planning.",
+        "inventory_team": "Manages stock levels, suppliers, and inventory analysis.",
+        "sales_team": "Analyzes sales and profit data."
+    }
+    
+    worker_info = "\n".join([f"- {name}: {worker_descriptions.get(name, 'Specialized worker')}" 
+                             for name in members])
+    
+    system_prompt = f"""You are a supervisor coordinating specialized workers.
+
+AVAILABLE WORKERS:
+{worker_info}
+
+ROUTING RULES (CRITICAL):
+1. Check the LAST message - if it has a 'name' field matching a worker, that worker JUST responded
+2. NEVER route back to a worker that just provided a response
+3. Each worker should be called ONCE maximum per user request
+4. DEFAULT TO FINISH unless the user explicitly needs a worker's expertise
+5. If multiple workers needed, route to them ONE AT A TIME in logical order
+
+TERMINATE (respond with FINISH) when:
+a. A worker just provided a complete answer to the user's question
+b. The user's request is fully satisfied
+c. No worker matches the user's request
+d. A worker reports an error or asks user for more information
+
+Your available workers: {members}
+Respond ONLY with the worker name OR 'FINISH'."""
     
     class Router(TypedDict):
         """Worker to route to next"""
@@ -309,37 +348,197 @@ def calculate_cost(recipe_name: str) -> str:
 voice_agent = create_react_agent(
     llm, 
     [generate_voice_response, text_to_speech],
-    prompt="You are a helpful restaurant operations assistant. Respond naturally and conversationally. "
-           "Just provide clear, direct text responses - the server handles voice conversion."
+    prompt="""You are a conversational assistant for restaurant operations.
+    
+ROLE: Handle direct user conversation with natural, helpful responses.
+INPUT: User questions, greetings, general inquiries
+OUTPUT: Plain text responses (server handles voice/TTS conversion)
+
+RULES:
+1. Respond naturally and concisely
+2. NEVER add prefixes like 'VOICE:' or 'TTS:' - return plain text only
+3. If user asks about recipes/inventory/operations, say you'll help and let supervisor route to chef_team
+4. Keep responses conversational but professional for kitchen staff"""
 )
 
 video_agent = create_react_agent(
     llm, 
     [display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment],
-    prompt="You are the Video Visualization Specialist. Create visual displays using React Flow. Return visualization commands as JSON."
+    prompt="""You are a visualization specialist for kitchen operations.
+
+ROLE: Create visual displays when users need to SEE data graphically.
+INPUT: Requests for charts, graphs, visual recipe cards, team boards
+OUTPUT: Text response with embedded VISUALIZATION JSON
+
+RULES:
+1. ONLY create visualizations when explicitly requested or clearly beneficial
+2. Return descriptive text PLUS embedded JSON for frontend rendering
+3. Available displays: recipe cards, inventory alerts, team assignments, prediction graphs
+4. If user just wants information (not visualization), let supervisor route elsewhere"""
 )
 
 marketing_agent = create_react_agent(
     llm, 
     [create_marketing_content],
-    prompt="You are the Marketing Specialist. Create compelling marketing content."
+    prompt="""You are a marketing content creator for culinary products.
+
+ROLE: Generate marketing copy and promotional content.
+INPUT: Product names, dishes, or promotional requests
+OUTPUT: Engaging marketing text
+
+RULES:
+1. ONLY handle marketing/promotional content requests
+2. Keep copy professional and suitable for food industry
+3. If request isn't about marketing, return error so supervisor can re-route"""
 )
 
 # Builder team workers
-dev_tools_agent = create_react_agent(llm, [generate_tool_code])
+dev_tools_agent = create_react_agent(
+    llm, 
+    [generate_tool_code],
+    prompt="""You are a developer tool assistant.
+
+ROLE: Generate Python code for tools and scripts.
+INPUT: Tool names, descriptions, or code requests
+OUTPUT: Python code snippets
+
+RULES:
+1. ONLY handle code generation requests
+2. Keep code concise, readable, and well-documented
+3. If request isn't about code, return error so supervisor can re-route"""
+)
 
 # Kitchen team workers
-recipe_agent = create_react_agent(llm, [search_recipes, get_recipe_details])
-team_pm_agent = create_react_agent(llm, [get_team_members, assign_task])
-dish_ideation_agent = create_react_agent(llm, [suggest_dishes])
+recipe_agent = create_react_agent(
+    llm, 
+    [search_recipes, get_recipe_details, create_recipe, add_ingredient_to_recipe, list_ingredients],
+    prompt="""You are a recipe database specialist.
+
+ROLE: Search, retrieve, and manage recipe information from Neo4j database.
+INPUT: Recipe names, ingredient lists, dietary requirements, recipe creation requests
+OUTPUT: Recipe names with descriptions, detailed recipe info, confirmation of creation
+
+AVAILABLE OPERATIONS:
+- search_recipes: Find recipes by name/ingredients/tags
+- get_recipe_details: Get full recipe info (ingredients, instructions, etc.)
+- create_recipe: Add new recipe to database
+- add_ingredient_to_recipe: Add ingredient to existing recipe
+- list_ingredients: List available ingredients
+
+RULES:
+1. ONLY handle recipe-related operations - NOT inventory, team, or sales
+2. If no recipes found, say so clearly - don't make up recipes
+3. For ambiguous requests, ask ONE clarifying question
+4. Return actual database results, not generic examples"""
+)
+
+team_pm_agent = create_react_agent(
+    llm, 
+    [get_team_members, assign_task],
+    prompt="""You are a team project manager.
+
+ROLE: Manage team members, tasks, and assignments.
+INPUT: Team member names, task descriptions, assignment requests
+OUTPUT: Team member lists, task assignments, confirmation of changes
+
+AVAILABLE OPERATIONS:
+- get_team_members: List team members
+- assign_task: Assign task to team member
+
+RULES:
+1. ONLY handle team management operations
+2. Keep assignments clear and concise
+3. If request isn't about team management, return error so supervisor can re-route"""
+)
+
+dish_ideation_agent = create_react_agent(
+    llm, 
+    [suggest_dishes],
+    prompt="""You are a dish ideation specialist.
+
+ROLE: Suggest dish ideas based on ingredients.
+INPUT: Ingredient lists
+OUTPUT: Dish ideas
+
+RULES:
+1. ONLY handle dish ideation requests
+2. Keep suggestions creative and relevant
+3. If request isn't about dish ideation, return error so supervisor can re-route"""
+)
 
 # Inventory team workers
-stock_agent = create_react_agent(llm, [check_stock])
-suppliers_agent = create_react_agent(llm, [list_suppliers])
-analysis_agent = create_react_agent(llm, [forecast_demand])
+stock_agent = create_react_agent(
+    llm, 
+    [check_stock],
+    prompt="""You are an inventory management specialist.
+
+ROLE: Check stock levels and manage inventory.
+INPUT: Item names, stock requests
+OUTPUT: Stock levels, confirmation of changes
+
+AVAILABLE OPERATIONS:
+- check_stock: Check stock level of item
+
+RULES:
+1. ONLY handle inventory management operations
+2. Keep stock levels accurate and up-to-date
+3. If request isn't about inventory, return error so supervisor can re-route"""
+)
+
+suppliers_agent = create_react_agent(
+    llm, 
+    [list_suppliers],
+    prompt="""You are a supplier management specialist.
+
+ROLE: Manage suppliers and their information.
+INPUT: Supplier names, requests for supplier lists
+OUTPUT: Supplier lists
+
+AVAILABLE OPERATIONS:
+- list_suppliers: List suppliers
+
+RULES:
+1. ONLY handle supplier management operations
+2. Keep supplier information accurate and up-to-date
+3. If request isn't about suppliers, return error so supervisor can re-route"""
+)
+
+analysis_agent = create_react_agent(
+    llm, 
+    [forecast_demand],
+    prompt="""You are a demand forecasting specialist.
+
+ROLE: Forecast demand for items.
+INPUT: Item names, demand requests
+OUTPUT: Demand forecasts
+
+AVAILABLE OPERATIONS:
+- forecast_demand: Forecast demand for item
+
+RULES:
+1. ONLY handle demand forecasting operations
+2. Keep forecasts accurate and up-to-date
+3. If request isn't about demand forecasting, return error so supervisor can re-route"""
+)
 
 # Sales team workers
-profit_agent = create_react_agent(llm, [calculate_cost])
+profit_agent = create_react_agent(
+    llm,
+    [calculate_cost],
+    prompt="""You are a profitability analyst.
+
+ROLE: Calculate costs and analyze profit margins.
+INPUT: Recipe names, cost calculation requests
+OUTPUT: Cost breakdowns, profit analysis
+
+AVAILABLE OPERATIONS:
+- calculate_cost: Calculate cost per serving for recipes
+
+RULES:
+1. ONLY handle cost/profit analysis operations
+2. Return accurate cost information
+3. If request isn't about costs/profits, return error so supervisor can re-route"""
+)
 
 
 # ========================================================================
