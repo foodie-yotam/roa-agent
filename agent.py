@@ -81,9 +81,13 @@ def make_supervisor_node(llm, members: list[str]):
     """Create a supervisor node that routes to team members"""
     options = ["FINISH"] + members
     system_prompt = (
-        f"You are a supervisor managing: {members}. "
-        "Respond with the worker to act next. "
-        "When finished, respond with FINISH."
+        f"You are a supervisor managing these workers: {members}. "
+        "Based on the conversation history and the user's request:\n"
+        "1. If a worker has already completed the task successfully, respond with FINISH\n"
+        "2. If the task requires a specific worker, route to that worker\n"
+        "3. IMPORTANT: Each worker should only be called ONCE per task unless explicitly needed again\n"
+        "4. Look at recent messages - if a worker just responded, the task is likely complete\n"
+        "Respond with the worker name to act next, or FINISH if done."
     )
     
     class Router(TypedDict):
