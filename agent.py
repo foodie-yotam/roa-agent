@@ -112,13 +112,13 @@ def make_supervisor_node(llm, members: list[str]):
 # --- Voice Tools ---
 @tool
 def generate_voice_response(text: str, tone: str = "professional") -> str:
-    """Generate a voice-optimized text response"""
-    return f"VOICE [{tone}]: {text}"
+    """Generate a natural text response (server handles TTS via ElevenLabs)"""
+    return text
 
 @tool
 def text_to_speech(text: str) -> str:
-    """Convert text to speech format"""
-    return f"TTS: {text[:50]}..."
+    """Return text for speech (server handles TTS via ElevenLabs)"""
+    return text
 
 # --- Video Tools ---
 @tool
@@ -309,7 +309,8 @@ def calculate_cost(recipe_name: str) -> str:
 voice_agent = create_react_agent(
     llm, 
     [generate_voice_response, text_to_speech],
-    prompt="You are the Voice Response Specialist. Generate clear voice-optimized responses."
+    prompt="You are a helpful restaurant operations assistant. Respond naturally and conversationally. "
+           "Just provide clear, direct text responses - the server handles voice conversion."
 )
 
 video_agent = create_react_agent(
