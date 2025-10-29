@@ -425,7 +425,7 @@ kitchen_builder.add_node("recipe", recipe_node)
 kitchen_builder.add_node("team_pm", team_pm_node)
 kitchen_builder.add_node("dish_ideation", dish_ideation_node)
 kitchen_builder.add_edge(START, "supervisor")
-kitchen_team_graph = kitchen_builder.compile(recursion_limit=100)
+kitchen_team_graph = kitchen_builder.compile()
 
 
 # === INVENTORY TEAM ===
@@ -511,7 +511,7 @@ chef_builder.add_node("kitchen_team", call_kitchen_team)
 chef_builder.add_node("inventory_team", call_inventory_team)
 chef_builder.add_node("sales_team", call_sales_team)
 chef_builder.add_edge(START, "supervisor")
-chef_team_graph = chef_builder.compile(recursion_limit=100)
+chef_team_graph = chef_builder.compile()
 
 
 # ========================================================================
@@ -547,7 +547,7 @@ root_builder.add_node("speaker_team", call_speaker_team)
 root_builder.add_node("builder_team", call_builder_team)
 root_builder.add_node("chef_team", call_chef_team)
 root_builder.add_edge(START, "supervisor")
-root_graph = root_builder.compile(recursion_limit=100)
+root_graph = root_builder.compile()
 
 # Export as 'agent' for LangGraph Cloud
 agent = root_graph
