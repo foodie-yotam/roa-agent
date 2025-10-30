@@ -82,27 +82,28 @@ def make_supervisor_node(llm, members: list[str]):
     options = ["FINISH"] + members
     
     # Build descriptions for each worker based on their name
+    # Include tools each agent has access to for better routing decisions
     worker_descriptions = {
         # Speaker team agents
-        "voice": "Handles direct conversation with users. Returns natural text responses.",
-        "video": "Creates visual displays and React Flow visualizations.",
-        "marketing": "Generates marketing content and copy.",
+        "voice": "Handles direct conversation with users. Returns natural text responses. NO TOOLS - pure conversation.",
+        "video": "Creates visual displays. TOOLS: display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment",
+        "marketing": "Generates marketing content. TOOLS: create_marketing_content",
         # Kitchen team agents  
-        "recipe": "Searches and retrieves recipe information from database.",
-        "team_pm": "Manages kitchen team tasks and assignments.",
-        "dish_ideation": "Helps brainstorm and plan new dishes.",
+        "recipe": "Searches/retrieves recipes from Neo4j database. TOOLS: search_recipes, get_recipe_details. Can find recipes by name or kitchen.",
+        "team_pm": "Manages kitchen team. TOOLS: get_team_members, assign_task",
+        "dish_ideation": "Brainstorms new dishes. TOOLS: suggest_dishes (based on ingredients)",
         # Inventory team agents
-        "stock": "Checks inventory levels and stock information.",
-        "suppliers": "Manages supplier information and ordering.",
-        "analysis": "Analyzes inventory trends and predictions.",
+        "stock": "Checks inventory levels. TOOLS: check_stock (by item or full inventory)",
+        "suppliers": "Manages suppliers. TOOLS: list_suppliers",
+        "analysis": "Forecasts demand. TOOLS: forecast_demand (predicts inventory needs)",
         # Sales team agents
-        "profit": "Analyzes sales data and profitability.",
+        "profit": "Analyzes costs/profits. TOOLS: calculate_cost (recipe cost per serving)",
         # Top-level teams
-        "speaker_team": "Handles user conversation, video displays, and marketing. Use for greetings, explanations, visualizations.",
-        "chef_team": "Handles ALL kitchen operations: recipes, ingredients, inventory, team management, sales. Use for food/cooking questions.",
-        "kitchen_team": "Manages recipes, team tasks, and dish planning.",
-        "inventory_team": "Manages stock levels, suppliers, and inventory analysis.",
-        "sales_team": "Analyzes sales and profit data."
+        "speaker_team": "User-facing team. Subagents: voice (conversation), video (visualizations), marketing (content). Use for greetings, explanations, visual displays.",
+        "chef_team": "Complete kitchen operations. Subagents: kitchen_team (recipes/team/dishes), inventory_team (stock/suppliers/forecasts), sales_team (cost/profit). Use for ALL food/cooking/kitchen questions.",
+        "kitchen_team": "Recipe & team management. Subagents: recipe (search/details from DB), team_pm (members/tasks), dish_ideation (suggest dishes). Has access to Neo4j recipe database.",
+        "inventory_team": "Stock management. Subagents: stock (check levels), suppliers (list), analysis (forecast demand).",
+        "sales_team": "Financial analysis. Subagents: profit (calculate recipe costs)."
     }
     
     worker_info = "\n".join([f"- {name}: {worker_descriptions.get(name, 'Specialized worker')}" 
@@ -412,21 +413,32 @@ RULES:
 recipe_agent = create_react_agent(
     llm, 
     [search_recipes, get_recipe_details],
-    prompt="""You are a recipe database specialist.
+    prompt="""You are a recipe database specialist with access to Neo4j database.
 
-ROLE: Search and retrieve recipe information from Neo4j database.
-INPUT: Recipe names, ingredient lists, dietary requirements
+ROLE: Search and retrieve recipe information from Neo4j.
+INPUT: Recipe names (may contain typos/numbers), ingredient lists, dietary requirements
 OUTPUT: Recipe names with descriptions, detailed recipe info
 
-AVAILABLE OPERATIONS:
-- search_recipes: Find recipes by name or kitchen
-- get_recipe_details: Get full recipe info (ingredients, instructions, etc.)
+AVAILABLE TOOLS:
+- search_recipes(kitchen_name?, recipe_name?) - Find recipes by name or list all in kitchen
+- get_recipe_details(recipe_name, kitchen_name?) - Get full recipe (ingredients, directions, etc.)
+
+DATABASE INFO:
+- Contains recipes like: "Arroz Sushi", "Gazpacho", "Salmón Confitado", "Tartar de Salmón con Arroz de Sushi"
+- Recipe names are case-sensitive and must match exactly
+- Common variations: "Arroz" (not "arruz"), "Salmón" (not "salmon")
+
+HANDLING USER INPUT:
+1. Extract recipe name from user query (ignore numbers like "3 arruz sushi" → "arruz sushi")
+2. Fix common typos before searching (arruz→Arroz, salmon→Salmón, gazpaco→Gazpacho)
+3. Try exact match first, then search all recipes and find closest match
+4. If not found, suggest similar recipes from database
 
 RULES:
-1. ONLY handle recipe-related operations - NOT inventory, team, or sales
-2. If no recipes found, say so clearly - don't make up recipes
-3. For ambiguous requests, ask ONE clarifying question
-4. Return actual database results, not generic examples"""
+1. ONLY handle recipe operations - NOT inventory, team, or sales
+2. NEVER make up recipes - only return actual database results
+3. If no match, search ALL recipes and suggest closest ones
+4. For ambiguous requests, ask ONE clarifying question"""
 )
 
 team_pm_agent = create_react_agent(
