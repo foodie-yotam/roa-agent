@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Test agent locally with LangSmith tracing"""
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+# Enable LangSmith tracing
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = "roa-voice-local"
+os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
+# LANGSMITH_API_KEY should be in .env
+
+from agent import agent
+
+def test_agent(message: str):
+    """Test the agent with a message"""
+    print(f"\n{'='*80}")
+    print(f"Testing: {message}")
+    print(f"{'='*80}\n")
+    
+    # Create thread config
+    config = {"configurable": {"thread_id": "test-thread-1"}}
+    
+    # Invoke agent
+    input_data = {"messages": [{"role": "user", "content": message}]}
+    
+    for chunk in agent.stream(input_data, config, stream_mode="updates"):
+        print(f"📦 Chunk: {chunk}")
+    
+    print(f"\n{'='*80}")
+    print(f"✅ Complete! View trace in LangSmith:")
+    print(f"https://smith.langchain.com/o/YOUR_ORG/projects/p/roa-voice-local")
+    print(f"{'='*80}\n")
+
+if __name__ == "__main__":
+    # Test messages
+    test_agent("Show me pasta recipes")
+    
+    # Uncomment to test more:
+    # test_agent("Create a marketing post for our new dish")
+    # test_agent("What's in stock?")

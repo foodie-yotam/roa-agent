@@ -80,92 +80,15 @@ class State(MessagesState):
 def make_supervisor_node(llm, members: list[str]):
     """Create a supervisor node that routes to team members"""
     options = ["FINISH"] + members
-    
-    # Build descriptions for each worker based on their name
-    # Include tools each agent has access to for better routing decisions
-    worker_descriptions = {
-        # Speaker team agents
-        "voice": "Handles direct conversation with users. Returns natural text responses. NO TOOLS - pure conversation.",
-        "video": "Creates visual displays. TOOLS: display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment",
-        "marketing": "Generates marketing content. TOOLS: create_marketing_content",
-        # Kitchen team agents  
-        "recipe": "Searches/retrieves recipes from Neo4j database. TOOLS: search_recipes, get_recipe_details. Can find recipes by name or kitchen.",
-        "team_pm": "Manages kitchen team. TOOLS: get_team_members, assign_task",
-        "dish_ideation": "Brainstorms new dishes. TOOLS: suggest_dishes (based on ingredients)",
-        # Inventory team agents
-        "stock": "Checks inventory levels. TOOLS: check_stock (by item or full inventory)",
-        "suppliers": "Manages suppliers. TOOLS: list_suppliers",
-        "analysis": "Forecasts demand. TOOLS: forecast_demand (predicts inventory needs)",
-        # Sales team agents
-        "profit": "Analyzes costs/profits. TOOLS: calculate_cost (recipe cost per serving)",
-        # Top-level teams
-        "speaker_team": "User-facing team. Subagents: voice (conversation), video (visualizations), marketing (content). Use for greetings, explanations, visual displays.",
-        "chef_team": "Complete kitchen operations. Subagents: kitchen_team (recipes/team/dishes), inventory_team (stock/suppliers/forecasts), sales_team (cost/profit). Use for ALL food/cooking/kitchen questions.",
-        "kitchen_team": "Recipe & team management. Subagents: recipe (search/details from DB), team_pm (members/tasks), dish_ideation (suggest dishes). Has access to Neo4j recipe database.",
-        "inventory_team": "Stock management. Subagents: stock (check levels), suppliers (list), analysis (forecast demand).",
-        "sales_team": "Financial analysis. Subagents: profit (calculate recipe costs)."
-    }
-    
-    worker_info = "\n".join([f"- {name}: {worker_descriptions.get(name, 'Specialized worker')}" 
-                             for name in members])
-    
-    # Build routing examples based on available workers
-    routing_examples = []
-    if "speaker_team" in members:
-        routing_examples.extend([
-            '"hello" → speaker_team (greeting/conversation)',
-            '"show me pasta recipes visually" → speaker_team (has video display tools)',
-            '"explain how to cook this" → speaker_team (conversational explanation)'
-        ])
-    if "chef_team" in members:
-        routing_examples.extend([
-            '"get Arroz Sushi recipe" → chef_team (recipe database access)',
-            '"what ingredients do I need" → chef_team (recipe/inventory info)',
-            '"check stock levels" → chef_team (inventory management)'
-        ])
-    if "recipe" in members:
-        routing_examples.extend([
-            '"find sushi recipes" → recipe (has search_recipes tool)',
-            '"get details for Gazpacho" → recipe (has get_recipe_details tool)'
-        ])
-    if "video" in members:
-        routing_examples.extend([
-            '"show me recipes as a visualization" → video (has display_recipes)',
-            '"visualize the team assignments" → video (has display_team_assignment)'
-        ])
-    if "stock" in members:
-        routing_examples.append('"what\'s in the pantry" → stock (has check_stock tool)')
-    if "voice" in members:
-        routing_examples.extend([
-            '"thanks" → voice (conversational, no tools needed)',
-            '"that\'s helpful" → voice (acknowledgment, just respond)'
-        ])
-    
-    examples_text = "\n".join([f"  {ex}" for ex in routing_examples]) if routing_examples else "  (no examples for this team)"
-    
-    system_prompt = f"""You are a supervisor coordinating specialized workers.
-
-AVAILABLE WORKERS:
-{worker_info}
-
-ROUTING EXAMPLES:
-{examples_text}
-
-ROUTING RULES (CRITICAL):
-1. Check the LAST message - if it has a 'name' field matching a worker, that worker JUST responded
-2. NEVER route back to a worker that just provided a response
-3. Each worker should be called ONCE maximum per user request
-4. DEFAULT TO FINISH unless the user explicitly needs a worker's expertise
-5. If multiple workers needed, route to them ONE AT A TIME in logical order
-
-TERMINATE (respond with FINISH) when:
-a. A worker just provided a complete answer to the user's question
-b. The user's request is fully satisfied
-c. No worker matches the user's request - use voice for general conversation
-d. A worker reports an error or asks user for more information
-
-Your available workers: {members}
-Respond ONLY with the worker name OR 'FINISH'."""
+    system_prompt = (
+        f"You are a supervisor managing these workers: {members}. "
+        "Based on the conversation history and the user's request:\n"
+        "1. If a worker has already completed the task successfully, respond with FINISH\n"
+        "2. If the task requires a specific worker, route to that worker\n"
+        "3. IMPORTANT: Each worker should only be called ONCE per task unless explicitly needed again\n"
+        "4. Look at recent messages - if a worker just responded, the task is likely complete\n"
+        "Respond with the worker name to act next, or FINISH if done."
+    )
     
     class Router(TypedDict):
         """Worker to route to next"""
@@ -189,13 +112,13 @@ Respond ONLY with the worker name OR 'FINISH'."""
 # --- Voice Tools ---
 @tool
 def generate_voice_response(text: str, tone: str = "professional") -> str:
-    """Generate a natural text response (server handles TTS via ElevenLabs)"""
-    return text
+    """Generate a voice-optimized text response"""
+    return f"VOICE [{tone}]: {text}"
 
 @tool
 def text_to_speech(text: str) -> str:
-    """Return text for speech (server handles TTS via ElevenLabs)"""
-    return text
+    """Convert text to speech format"""
+    return f"TTS: {text[:50]}..."
 
 # --- Video Tools ---
 @tool
@@ -299,60 +222,25 @@ def generate_tool_code(tool_name: str, description: str) -> str:
     """Generate Python tool code"""
     return f"CODE: @tool\\ndef {tool_name}(): pass  # {description}"
 
-# --- Recipe Tools (REAL - from v2) with Fuzzy Matching ---
+# --- Recipe Tools (REAL - from v2) ---
 @tool
 def search_recipes(kitchen_name: Optional[str] = None, recipe_name: Optional[str] = None) -> str:
-    """Search for recipes with fuzzy matching support"""
+    """Search for recipes"""
     try:
-        from rapidfuzz import fuzz, process
-        
-        if recipe_name:
-            # Get all recipes to fuzzy match against
-            if kitchen_name:
-                query = "MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe"
-                results = run_query(query, {"kitchen_name": kitchen_name})
-            else:
-                query = "MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe LIMIT 100"
-                results = run_query(query)
-            
-            if not results:
-                return "No recipes found in database"
-            
-            # Extract recipe names for fuzzy matching
-            recipe_names = [r['recipe'] for r in results]
-            
-            # Find best matches (threshold 70% similarity)
-            matches = process.extract(recipe_name, recipe_names, scorer=fuzz.ratio, limit=5)
-            good_matches = [(name, score) for name, score, _ in matches if score >= 70]
-            
-            if good_matches:
-                # Return matching recipes with confidence scores
-                match_info = "\n".join([f"  - {name} (match: {score}%)" for name, score in good_matches])
-                return f"Found {len(good_matches)} matching recipes:\n{match_info}"
-            else:
-                return f"No recipes found matching '{recipe_name}'. Try: {', '.join(recipe_names[:5])}"
-        
-        elif kitchen_name:
+        if kitchen_name:
             query = "MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe"
             results = run_query(query, {"kitchen_name": kitchen_name})
         else:
             query = "MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe LIMIT 20"
             results = run_query(query)
-        
         return f"Found {len(results)} recipes: {results}" if results else "No recipes found"
-    except ImportError as e:
-        raise ImportError(f"rapidfuzz library not installed: {e}. Run: pip install rapidfuzz")
     except Exception as e:
-        error_msg = f"RecipeSearchError: Failed searching recipes (kitchen={kitchen_name}, recipe={recipe_name}). Error: {type(e).__name__}: {str(e)}"
-        return error_msg  # Return error as string so agent can see it, but it will show in traces
+        return f"Error: {str(e)}"
 
 @tool
 def get_recipe_details(recipe_name: str, kitchen_name: Optional[str] = None) -> str:
-    """Get recipe details with fuzzy matching fallback"""
+    """Get recipe details"""
     try:
-        from rapidfuzz import fuzz, process
-        
-        # Try exact match first
         query = """
         MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
         OPTIONAL MATCH (r)-[u:USES]->(c:Component)
@@ -360,40 +248,9 @@ def get_recipe_details(recipe_name: str, kitchen_name: Optional[str] = None) -> 
         LIMIT 1
         """
         results = run_query(query, {"recipe_name": recipe_name})
-        
-        if results:
-            return f"Recipe: {results[0]}"
-        
-        # Exact match failed - try fuzzy matching
-        # Get all recipe names
-        all_recipes_query = "MATCH (r:Recipe) RETURN r.name as name LIMIT 100"
-        all_recipes = run_query(all_recipes_query)
-        
-        if not all_recipes:
-            return "No recipes found in database"
-        
-        recipe_names = [r['name'] for r in all_recipes]
-        
-        # Find best match
-        best_match = process.extractOne(recipe_name, recipe_names, scorer=fuzz.ratio)
-        
-        if best_match and best_match[1] >= 75:  # 75% similarity threshold
-            matched_name = best_match[0]
-            # Get details for the matched recipe
-            results = run_query(query, {"recipe_name": matched_name})
-            if results:
-                return f"Found similar recipe '{matched_name}' (you searched for '{recipe_name}'):\n{results[0]}"
-        
-        # Still no match - suggest alternatives
-        suggestions = process.extract(recipe_name, recipe_names, scorer=fuzz.ratio, limit=3)
-        suggestion_text = ", ".join([name for name, score, _ in suggestions])
-        return f"Recipe '{recipe_name}' not found. Did you mean: {suggestion_text}?"
-        
-    except ImportError as e:
-        raise ImportError(f"rapidfuzz library not installed: {e}. Run: pip install rapidfuzz")
+        return f"Recipe: {results}" if results else "Recipe not found"
     except Exception as e:
-        error_msg = f"RecipeDetailsError: Failed getting details for '{recipe_name}'. Error: {type(e).__name__}: {str(e)}"
-        return error_msg  # Return error as string so agent can see it, but it will show in traces
+        return f"Error: {str(e)}"
 
 # --- Team PM Tools ---
 @tool
@@ -452,205 +309,36 @@ def calculate_cost(recipe_name: str) -> str:
 voice_agent = create_react_agent(
     llm, 
     [generate_voice_response, text_to_speech],
-    prompt="""You are a conversational assistant for restaurant operations.
-    
-ROLE: Handle direct user conversation with natural, helpful responses.
-INPUT: User questions, greetings, general inquiries
-OUTPUT: Plain text responses (server handles voice/TTS conversion)
-
-RULES:
-1. Respond naturally and concisely
-2. NEVER add prefixes like 'VOICE:' or 'TTS:' - return plain text only
-3. If user asks about recipes/inventory/operations, say you'll help and let supervisor route to chef_team
-4. Keep responses conversational but professional for kitchen staff"""
+    prompt="You are the Voice Response Specialist. Generate clear voice-optimized responses."
 )
 
 video_agent = create_react_agent(
     llm, 
     [display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment],
-    prompt="""You are a visualization specialist for kitchen operations.
-
-ROLE: Create visual displays when users need to SEE data graphically.
-INPUT: Requests for charts, graphs, visual recipe cards, team boards
-OUTPUT: Text response with embedded VISUALIZATION JSON
-
-RULES:
-1. ONLY create visualizations when explicitly requested or clearly beneficial
-2. Return descriptive text PLUS embedded JSON for frontend rendering
-3. Available displays: recipe cards, inventory alerts, team assignments, prediction graphs
-4. If user just wants information (not visualization), let supervisor route elsewhere"""
+    prompt="You are the Video Visualization Specialist. Create visual displays using React Flow. Return visualization commands as JSON."
 )
 
 marketing_agent = create_react_agent(
     llm, 
     [create_marketing_content],
-    prompt="""You are a marketing content creator for culinary products.
-
-ROLE: Generate marketing copy and promotional content.
-INPUT: Product names, dishes, or promotional requests
-OUTPUT: Engaging marketing text
-
-RULES:
-1. ONLY handle marketing/promotional content requests
-2. Keep copy professional and suitable for food industry
-3. If request isn't about marketing, return error so supervisor can re-route"""
+    prompt="You are the Marketing Specialist. Create compelling marketing content."
 )
 
 # Builder team workers
-dev_tools_agent = create_react_agent(
-    llm, 
-    [generate_tool_code],
-    prompt="""You are a developer tool assistant.
-
-ROLE: Generate Python code for tools and scripts.
-INPUT: Tool names, descriptions, or code requests
-OUTPUT: Python code snippets
-
-RULES:
-1. ONLY handle code generation requests
-2. Keep code concise, readable, and well-documented
-3. If request isn't about code, return error so supervisor can re-route"""
-)
+dev_tools_agent = create_react_agent(llm, [generate_tool_code])
 
 # Kitchen team workers
-recipe_agent = create_react_agent(
-    llm, 
-    [search_recipes, get_recipe_details],
-    prompt="""You are a recipe database specialist with access to Neo4j database.
-
-ROLE: Search and retrieve recipe information from Neo4j.
-INPUT: Recipe names (may contain typos/numbers), ingredient lists, dietary requirements
-OUTPUT: Recipe names with descriptions, detailed recipe info
-
-AVAILABLE TOOLS:
-- search_recipes(kitchen_name?, recipe_name?) - Find recipes by name or list all in kitchen
-- get_recipe_details(recipe_name, kitchen_name?) - Get full recipe (ingredients, directions, etc.)
-
-DATABASE INFO:
-- Contains recipes like: "Arroz Sushi", "Gazpacho", "Salmón Confitado", "Tartar de Salmón con Arroz de Sushi"
-- Recipe names are case-sensitive and must match exactly
-- Common variations: "Arroz" (not "arruz"), "Salmón" (not "salmon")
-
-HANDLING USER INPUT:
-1. Extract recipe name from user query (ignore numbers like "3 arruz sushi" → "arruz sushi")
-2. Fix common typos before searching (arruz→Arroz, salmon→Salmón, gazpaco→Gazpacho)
-3. Try exact match first, then search all recipes and find closest match
-4. If not found, suggest similar recipes from database
-
-RULES:
-1. ONLY handle recipe operations - NOT inventory, team, or sales
-2. NEVER make up recipes - only return actual database results
-3. If no match, search ALL recipes and suggest closest ones
-4. For ambiguous requests, ask ONE clarifying question"""
-)
-
-team_pm_agent = create_react_agent(
-    llm, 
-    [get_team_members, assign_task],
-    prompt="""You are a team project manager.
-
-ROLE: Manage team members, tasks, and assignments.
-INPUT: Team member names, task descriptions, assignment requests
-OUTPUT: Team member lists, task assignments, confirmation of changes
-
-AVAILABLE OPERATIONS:
-- get_team_members: List team members
-- assign_task: Assign task to team member
-
-RULES:
-1. ONLY handle team management operations
-2. Keep assignments clear and concise
-3. If request isn't about team management, return error so supervisor can re-route"""
-)
-
-dish_ideation_agent = create_react_agent(
-    llm, 
-    [suggest_dishes],
-    prompt="""You are a dish ideation specialist.
-
-ROLE: Suggest dish ideas based on ingredients.
-INPUT: Ingredient lists
-OUTPUT: Dish ideas
-
-RULES:
-1. ONLY handle dish ideation requests
-2. Keep suggestions creative and relevant
-3. If request isn't about dish ideation, return error so supervisor can re-route"""
-)
+recipe_agent = create_react_agent(llm, [search_recipes, get_recipe_details])
+team_pm_agent = create_react_agent(llm, [get_team_members, assign_task])
+dish_ideation_agent = create_react_agent(llm, [suggest_dishes])
 
 # Inventory team workers
-stock_agent = create_react_agent(
-    llm, 
-    [check_stock],
-    prompt="""You are an inventory management specialist.
-
-ROLE: Check stock levels and manage inventory.
-INPUT: Item names, stock requests
-OUTPUT: Stock levels, confirmation of changes
-
-AVAILABLE OPERATIONS:
-- check_stock: Check stock level of item
-
-RULES:
-1. ONLY handle inventory management operations
-2. Keep stock levels accurate and up-to-date
-3. If request isn't about inventory, return error so supervisor can re-route"""
-)
-
-suppliers_agent = create_react_agent(
-    llm, 
-    [list_suppliers],
-    prompt="""You are a supplier management specialist.
-
-ROLE: Manage suppliers and their information.
-INPUT: Supplier names, requests for supplier lists
-OUTPUT: Supplier lists
-
-AVAILABLE OPERATIONS:
-- list_suppliers: List suppliers
-
-RULES:
-1. ONLY handle supplier management operations
-2. Keep supplier information accurate and up-to-date
-3. If request isn't about suppliers, return error so supervisor can re-route"""
-)
-
-analysis_agent = create_react_agent(
-    llm, 
-    [forecast_demand],
-    prompt="""You are a demand forecasting specialist.
-
-ROLE: Forecast demand for items.
-INPUT: Item names, demand requests
-OUTPUT: Demand forecasts
-
-AVAILABLE OPERATIONS:
-- forecast_demand: Forecast demand for item
-
-RULES:
-1. ONLY handle demand forecasting operations
-2. Keep forecasts accurate and up-to-date
-3. If request isn't about demand forecasting, return error so supervisor can re-route"""
-)
+stock_agent = create_react_agent(llm, [check_stock])
+suppliers_agent = create_react_agent(llm, [list_suppliers])
+analysis_agent = create_react_agent(llm, [forecast_demand])
 
 # Sales team workers
-profit_agent = create_react_agent(
-    llm,
-    [calculate_cost],
-    prompt="""You are a profitability analyst.
-
-ROLE: Calculate costs and analyze profit margins.
-INPUT: Recipe names, cost calculation requests
-OUTPUT: Cost breakdowns, profit analysis
-
-AVAILABLE OPERATIONS:
-- calculate_cost: Calculate cost per serving for recipes
-
-RULES:
-1. ONLY handle cost/profit analysis operations
-2. Return accurate cost information
-3. If request isn't about costs/profits, return error so supervisor can re-route"""
-)
+profit_agent = create_react_agent(llm, [calculate_cost])
 
 
 # ========================================================================
@@ -737,7 +425,7 @@ kitchen_builder.add_node("recipe", recipe_node)
 kitchen_builder.add_node("team_pm", team_pm_node)
 kitchen_builder.add_node("dish_ideation", dish_ideation_node)
 kitchen_builder.add_edge(START, "supervisor")
-kitchen_team_graph = kitchen_builder.compile()
+kitchen_team_graph = kitchen_builder.compile(recursion_limit=100)
 
 
 # === INVENTORY TEAM ===
@@ -823,7 +511,7 @@ chef_builder.add_node("kitchen_team", call_kitchen_team)
 chef_builder.add_node("inventory_team", call_inventory_team)
 chef_builder.add_node("sales_team", call_sales_team)
 chef_builder.add_edge(START, "supervisor")
-chef_team_graph = chef_builder.compile()
+chef_team_graph = chef_builder.compile(recursion_limit=100)
 
 
 # ========================================================================
@@ -859,7 +547,7 @@ root_builder.add_node("speaker_team", call_speaker_team)
 root_builder.add_node("builder_team", call_builder_team)
 root_builder.add_node("chef_team", call_chef_team)
 root_builder.add_edge(START, "supervisor")
-root_graph = root_builder.compile()
+root_graph = root_builder.compile(recursion_limit=100)
 
 # Export as 'agent' for LangGraph Cloud
 agent = root_graph

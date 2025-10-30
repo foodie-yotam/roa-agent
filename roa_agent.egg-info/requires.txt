@@ -1,6 +1,5 @@
-langgraph
 langchain-core
 langchain-google-genai
-supabase
+langgraph
 neo4j
-rapidfuzz
+python-dotenv
