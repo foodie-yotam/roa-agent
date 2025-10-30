@@ -134,7 +134,11 @@ def make_supervisor_node(llm, members: list[str]):
     
     examples_text = "\n".join([f"  {ex}" for ex in routing_examples]) if routing_examples else "  (no examples for this team)"
     
-    system_prompt = f"""You are a supervisor coordinating specialized workers.
+    system_prompt = f"""You are a conversational supervisor for a restaurant operations assistant.
+
+YOUR DUAL ROLE:
+1. CONVERSATIONAL: Handle greetings, acknowledgments, general questions directly (respond with FINISH)
+2. TASK DELEGATOR: Route specific tasks to specialized workers
 
 AVAILABLE WORKERS:
 {worker_info}
@@ -142,18 +146,32 @@ AVAILABLE WORKERS:
 ROUTING EXAMPLES:
 {examples_text}
 
+WHEN TO FINISH (respond directly, no delegation):
+- Greetings: "hello", "hi", "good morning"
+- Acknowledgments: "thanks", "got it", "okay"
+- General questions: "what can you do?", "how are you?"
+- Simple confirmations: "yes", "no", "sounds good"
+→ For these, respond with FINISH immediately so root can answer conversationally
+
+WHEN TO DELEGATE (route to worker):
+- Recipe requests → chef_team
+- Inventory checks → chef_team
+- Visual displays → visualization
+- Marketing content → marketing
+- Development tasks → builder_team
+
 ROUTING RULES (CRITICAL):
 1. Check the LAST message - if it has a 'name' field matching a worker, that worker JUST responded
 2. NEVER route back to a worker that just provided a response
 3. Each worker should be called ONCE maximum per user request
-4. DEFAULT TO FINISH unless the user explicitly needs a worker's expertise
-5. If multiple workers needed, route to them ONE AT A TIME in logical order
+4. For conversational inputs, DEFAULT TO FINISH (let root respond naturally)
+5. Only delegate when user needs specific expertise/tools
 
 TERMINATE (respond with FINISH) when:
-a. A worker just provided a complete answer to the user's question
-b. The user's request is fully satisfied
-c. No worker matches the user's request - respond directly (root handles conversation)
-d. A worker reports an error or asks user for more information
+a. User input is conversational (greeting, thanks, simple question)
+b. A worker just provided a complete answer
+c. The user's request is fully satisfied
+d. A worker reports an error
 
 Your available workers: {members}
 Respond ONLY with the worker name OR 'FINISH'."""
@@ -777,7 +795,54 @@ chef_team_graph = chef_builder.compile()
 # TIER 0: ROOT GRAPH (Conversational agent with direct access to workers)
 # ========================================================================
 # Root agent handles all conversation directly - no separate speaker layer
-# Can delegate to: visualization, marketing, builder_team, chef_team
+# Flow: START → conversational_responder → supervisor (if needed) → workers → END
+
+# Create a conversational agent for root-level responses
+conversational_agent = create_react_agent(
+    llm,
+    [],  # No tools - pure conversation
+    prompt="""You are ROA, a friendly and professional restaurant operations assistant.
+
+ROLE: Handle direct conversation with kitchen staff and restaurant operators.
+STYLE: Natural, helpful, concise, professional
+
+You can:
+- Answer greetings warmly
+- Explain your capabilities
+- Provide general guidance
+- Acknowledge user feedback
+- Respond to simple questions
+
+For specific tasks (recipes, inventory, visualizations, team management), your supervisor will route to specialized workers.
+
+RULES:
+1. Be warm and professional
+2. Keep responses concise (2-3 sentences max for simple interactions)
+3. Don't make up data - if you need specific info, say so
+4. For complex requests, confirm you'll help and let the supervisor handle routing"""
+)
+
+def conversational_responder_node(state: State) -> Command[Literal["supervisor", "__end__"]]:
+    """Handle initial conversation and decide if delegation is needed"""
+    last_message = state["messages"][-1]
+    
+    # Simple conversational inputs - respond directly and end
+    conversational_keywords = ["hello", "hi", "hey", "thanks", "thank you", "ok", "okay", "got it"]
+    user_message = last_message.content.lower() if hasattr(last_message, 'content') else str(last_message[1]).lower()
+    
+    # Check if this is a simple conversational input
+    is_simple_conversation = any(keyword in user_message for keyword in conversational_keywords) and len(user_message.split()) <= 5
+    
+    if is_simple_conversation:
+        # Respond conversationally and end
+        result = conversational_agent.invoke(state)
+        return Command(
+            update={"messages": [HumanMessage(content=result["messages"][-1].content, name="assistant")]},
+            goto=END
+        )
+    else:
+        # Route to supervisor for task delegation
+        return Command(goto="supervisor")
 
 def call_builder_team(state: State) -> Command[Literal["supervisor"]]:
     response = builder_team_graph.invoke({"messages": state["messages"]})
@@ -796,12 +861,13 @@ def call_chef_team(state: State) -> Command[Literal["supervisor"]]:
 root_supervisor = make_supervisor_node(llm, ["visualization", "marketing", "builder_team", "chef_team"])
 
 root_builder = StateGraph(State)
+root_builder.add_node("conversational_responder", conversational_responder_node)
 root_builder.add_node("supervisor", root_supervisor)
 root_builder.add_node("visualization", visualization_node)
 root_builder.add_node("marketing", marketing_node)
 root_builder.add_node("builder_team", call_builder_team)
 root_builder.add_node("chef_team", call_chef_team)
-root_builder.add_edge(START, "supervisor")
+root_builder.add_edge(START, "conversational_responder")  # Start with conversation
 root_graph = root_builder.compile()
 
 # Export as 'agent' for LangGraph Cloud
