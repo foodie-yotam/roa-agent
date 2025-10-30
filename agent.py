@@ -411,19 +411,16 @@ RULES:
 # Kitchen team workers
 recipe_agent = create_react_agent(
     llm, 
-    [search_recipes, get_recipe_details, create_recipe, add_ingredient_to_recipe, list_ingredients],
+    [search_recipes, get_recipe_details],
     prompt="""You are a recipe database specialist.
 
-ROLE: Search, retrieve, and manage recipe information from Neo4j database.
-INPUT: Recipe names, ingredient lists, dietary requirements, recipe creation requests
-OUTPUT: Recipe names with descriptions, detailed recipe info, confirmation of creation
+ROLE: Search and retrieve recipe information from Neo4j database.
+INPUT: Recipe names, ingredient lists, dietary requirements
+OUTPUT: Recipe names with descriptions, detailed recipe info
 
 AVAILABLE OPERATIONS:
-- search_recipes: Find recipes by name/ingredients/tags
+- search_recipes: Find recipes by name or kitchen
 - get_recipe_details: Get full recipe info (ingredients, instructions, etc.)
-- create_recipe: Add new recipe to database
-- add_ingredient_to_recipe: Add ingredient to existing recipe
-- list_ingredients: List available ingredients
 
 RULES:
 1. ONLY handle recipe-related operations - NOT inventory, team, or sales
