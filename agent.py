@@ -1,13 +1,11 @@
 """
-ROA Agent Garden v3 - Hierarchical Multi-Agent System
+ROA Agent Garden v4 - Simplified Hierarchical Multi-Agent System
 Based on LangGraph hierarchical teams pattern
 
 Hierarchical Structure:
-ROOT SUPERVISOR
-├── speaker_team (compiled subgraph)
-│   ├── voice_agent
-│   ├── video_agent
-│   └── marketing_agent
+ROOT AGENT (Conversational - handles all user interaction directly)
+├── visualization_agent (visual displays & React Flow)
+├── marketing_agent (marketing content)
 ├── builder_team (compiled subgraph - dev only)
 │   └── dev_tools_agent
 └── chef_team (compiled subgraph)
@@ -21,6 +19,8 @@ ROOT SUPERVISOR
     │   └── analysis_agent
     └── sales_team (compiled subgraph)
         └── profit_agent
+
+Note: Root agent IS the speaker - no separate voice/speaker team.
 """
 
 import os
@@ -84,10 +84,9 @@ def make_supervisor_node(llm, members: list[str]):
     # Build descriptions for each worker based on their name
     # Include tools each agent has access to for better routing decisions
     worker_descriptions = {
-        # Speaker team agents
-        "voice": "Handles direct conversation with users. Returns natural text responses. NO TOOLS - pure conversation.",
-        "video": "Creates visual displays. TOOLS: display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment",
-        "marketing": "Generates marketing content. TOOLS: create_marketing_content",
+        # Direct workers (attached to root)
+        "visualization": "Creates visual displays. TOOLS: display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment. Use when user wants to SEE data graphically.",
+        "marketing": "Generates marketing content. TOOLS: create_marketing_content. Use for promotional/marketing requests only.",
         # Kitchen team agents  
         "recipe": "Searches/retrieves recipes from Neo4j database. TOOLS: search_recipes, get_recipe_details. Can find recipes by name or kitchen.",
         "team_pm": "Manages kitchen team. TOOLS: get_team_members, assign_task",
@@ -99,7 +98,7 @@ def make_supervisor_node(llm, members: list[str]):
         # Sales team agents
         "profit": "Analyzes costs/profits. TOOLS: calculate_cost (recipe cost per serving)",
         # Top-level teams
-        "speaker_team": "User-facing team. Subagents: voice (conversation), video (visualizations), marketing (content). Use for greetings, explanations, visual displays.",
+        "builder_team": "Developer tools team. Subagents: dev_tools (code generation). Use only for development/debugging.",
         "chef_team": "Complete kitchen operations. Subagents: kitchen_team (recipes/team/dishes), inventory_team (stock/suppliers/forecasts), sales_team (cost/profit). Use for ALL food/cooking/kitchen questions.",
         "kitchen_team": "Recipe & team management. Subagents: recipe (search/details from DB), team_pm (members/tasks), dish_ideation (suggest dishes). Has access to Neo4j recipe database.",
         "inventory_team": "Stock management. Subagents: stock (check levels), suppliers (list), analysis (forecast demand).",
@@ -111,12 +110,14 @@ def make_supervisor_node(llm, members: list[str]):
     
     # Build routing examples based on available workers
     routing_examples = []
-    if "speaker_team" in members:
+    if "visualization" in members:
         routing_examples.extend([
-            '"hello" → speaker_team (greeting/conversation)',
-            '"show me pasta recipes visually" → speaker_team (has video display tools)',
-            '"explain how to cook this" → speaker_team (conversational explanation)'
+            '"show me pasta recipes visually" → visualization (has display_recipes tool)',
+            '"visualize the team assignments" → visualization (has display_team_assignment)',
+            '"chart the inventory forecast" → visualization (has display_prediction_graph)'
         ])
+    if "marketing" in members:
+        routing_examples.append('"create marketing copy for our new dish" → marketing (promotional content)')
     if "chef_team" in members:
         routing_examples.extend([
             '"get Arroz Sushi recipe" → chef_team (recipe database access)',
@@ -128,18 +129,8 @@ def make_supervisor_node(llm, members: list[str]):
             '"find sushi recipes" → recipe (has search_recipes tool)',
             '"get details for Gazpacho" → recipe (has get_recipe_details tool)'
         ])
-    if "video" in members:
-        routing_examples.extend([
-            '"show me recipes as a visualization" → video (has display_recipes)',
-            '"visualize the team assignments" → video (has display_team_assignment)'
-        ])
     if "stock" in members:
         routing_examples.append('"what\'s in the pantry" → stock (has check_stock tool)')
-    if "voice" in members:
-        routing_examples.extend([
-            '"thanks" → voice (conversational, no tools needed)',
-            '"that\'s helpful" → voice (acknowledgment, just respond)'
-        ])
     
     examples_text = "\n".join([f"  {ex}" for ex in routing_examples]) if routing_examples else "  (no examples for this team)"
     
@@ -161,7 +152,7 @@ ROUTING RULES (CRITICAL):
 TERMINATE (respond with FINISH) when:
 a. A worker just provided a complete answer to the user's question
 b. The user's request is fully satisfied
-c. No worker matches the user's request - use voice for general conversation
+c. No worker matches the user's request - respond directly (root handles conversation)
 d. A worker reports an error or asks user for more information
 
 Your available workers: {members}
@@ -186,18 +177,7 @@ Respond ONLY with the worker name OR 'FINISH'."""
 # TIER 3: TOOLS (organized by domain)
 # ========================================================================
 
-# --- Voice Tools ---
-@tool
-def generate_voice_response(text: str, tone: str = "professional") -> str:
-    """Generate a natural text response (server handles TTS via ElevenLabs)"""
-    return text
-
-@tool
-def text_to_speech(text: str) -> str:
-    """Return text for speech (server handles TTS via ElevenLabs)"""
-    return text
-
-# --- Video Tools ---
+# --- Visualization Tools ---
 @tool
 def display_recipes(recipes: List[str]) -> str:
     """Display recipe cards in visual format with React Flow.
@@ -448,24 +428,8 @@ def calculate_cost(recipe_name: str) -> str:
 # TIER 2: WORKER AGENTS
 # ========================================================================
 
-# Speaker team workers
-voice_agent = create_react_agent(
-    llm, 
-    [generate_voice_response, text_to_speech],
-    prompt="""You are a conversational assistant for restaurant operations.
-    
-ROLE: Handle direct user conversation with natural, helpful responses.
-INPUT: User questions, greetings, general inquiries
-OUTPUT: Plain text responses (server handles voice/TTS conversion)
-
-RULES:
-1. Respond naturally and concisely
-2. NEVER add prefixes like 'VOICE:' or 'TTS:' - return plain text only
-3. If user asks about recipes/inventory/operations, say you'll help and let supervisor route to chef_team
-4. Keep responses conversational but professional for kitchen staff"""
-)
-
-video_agent = create_react_agent(
+# Direct visualization and marketing agents (attached to root)
+visualization_agent = create_react_agent(
     llm, 
     [display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment],
     prompt="""You are a visualization specialist for kitchen operations.
@@ -657,18 +621,11 @@ RULES:
 # TIER 1.5: TEAM GRAPHS (Subgraphs with their own supervisors)
 # ========================================================================
 
-# === SPEAKER TEAM ===
-def voice_node(state: State) -> Command[Literal["supervisor"]]:
-    result = voice_agent.invoke(state)
+# === DIRECT WORKERS (attached to root) ===
+def visualization_node(state: State) -> Command[Literal["supervisor"]]:
+    result = visualization_agent.invoke(state)
     return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="voice")]},
-        goto="supervisor"
-    )
-
-def video_node(state: State) -> Command[Literal["supervisor"]]:
-    result = video_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="video")]},
+        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="visualization")]},
         goto="supervisor"
     )
 
@@ -678,16 +635,6 @@ def marketing_node(state: State) -> Command[Literal["supervisor"]]:
         update={"messages": [HumanMessage(content=result["messages"][-1].content, name="marketing")]},
         goto="supervisor"
     )
-
-speaker_supervisor = make_supervisor_node(llm, ["voice", "video", "marketing"])
-
-speaker_builder = StateGraph(State)
-speaker_builder.add_node("supervisor", speaker_supervisor)
-speaker_builder.add_node("voice", voice_node)
-speaker_builder.add_node("video", video_node)
-speaker_builder.add_node("marketing", marketing_node)
-speaker_builder.add_edge(START, "supervisor")
-speaker_team_graph = speaker_builder.compile()
 
 
 # === BUILDER TEAM ===
@@ -827,15 +774,10 @@ chef_team_graph = chef_builder.compile()
 
 
 # ========================================================================
-# TIER 0: ROOT GRAPH (Top-level orchestration)
+# TIER 0: ROOT GRAPH (Conversational agent with direct access to workers)
 # ========================================================================
-
-def call_speaker_team(state: State) -> Command[Literal["supervisor"]]:
-    response = speaker_team_graph.invoke({"messages": state["messages"]})
-    return Command(
-        update={"messages": [HumanMessage(content=response["messages"][-1].content, name="speaker_team")]},
-        goto="supervisor"
-    )
+# Root agent handles all conversation directly - no separate speaker layer
+# Can delegate to: visualization, marketing, builder_team, chef_team
 
 def call_builder_team(state: State) -> Command[Literal["supervisor"]]:
     response = builder_team_graph.invoke({"messages": state["messages"]})
@@ -851,11 +793,12 @@ def call_chef_team(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-root_supervisor = make_supervisor_node(llm, ["speaker_team", "builder_team", "chef_team"])
+root_supervisor = make_supervisor_node(llm, ["visualization", "marketing", "builder_team", "chef_team"])
 
 root_builder = StateGraph(State)
 root_builder.add_node("supervisor", root_supervisor)
-root_builder.add_node("speaker_team", call_speaker_team)
+root_builder.add_node("visualization", visualization_node)
+root_builder.add_node("marketing", marketing_node)
 root_builder.add_node("builder_team", call_builder_team)
 root_builder.add_node("chef_team", call_chef_team)
 root_builder.add_edge(START, "supervisor")
@@ -870,13 +813,13 @@ agent = root_graph
 # ========================================================================
 
 if __name__ == "__main__":
-    print("🌳 ROA Agent Garden v3 - Hierarchical Architecture")
+    print("🌳 ROA Agent Garden v4 - Simplified Architecture")
     print("=" * 70)
     
     test_queries = [
         "What recipes do we have in Yotam Kitchen?",
         "Check stock levels for tomatoes",
-        "Show me a video about pasta recipe",
+        "Show me a visualization of pasta recipes",
     ]
     
     for query in test_queries:
