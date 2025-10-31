@@ -75,11 +75,49 @@ class State(MessagesState):
     """State shared across all hierarchical levels"""
     next: str
     routing_recommendations: str  # Conversational agent's routing suggestions
+    delegation_failures: dict  # Track failed delegations: {"worker_name": failure_count}
+
+
+# ========== CIRCUIT BREAKER ==========
+MAX_DELEGATION_FAILURES = 2  # Maximum failed attempts before circuit breaker trips
+
+def check_circuit_breaker(state: State, worker_name: str) -> tuple[bool, str]:
+    """Check if worker has exceeded failure limit
+    
+    Returns:
+        (can_delegate: bool, reason: str)
+    """
+    delegation_failures = state.get("delegation_failures", {})
+    failure_count = delegation_failures.get(worker_name, 0)
+    
+    if failure_count >= MAX_DELEGATION_FAILURES:
+        return (False, f"CIRCUIT BREAKER: {worker_name} has failed {failure_count} times (limit: {MAX_DELEGATION_FAILURES}). Stopping delegation to prevent infinite loop.")
+    
+    return (True, "")
+
+def record_delegation_failure(state: State, worker_name: str, reason: str) -> dict:
+    """Record a failed delegation attempt
+    
+    Failures are detected when:
+    - Worker reports error/limitation ("cannot", "unable to", etc.)
+    - Tool call fails
+    - Worker returns without completing task
+    """
+    delegation_failures = state.get("delegation_failures", {}).copy()
+    delegation_failures[worker_name] = delegation_failures.get(worker_name, 0) + 1
+    
+    print(f"⚠️  DELEGATION FAILURE: {worker_name} failed (attempt #{delegation_failures[worker_name]}, limit: {MAX_DELEGATION_FAILURES})")
+    print(f"   Reason: {reason}")
+    
+    return {"delegation_failures": delegation_failures}
 
 
 # ========== SUPERVISOR HELPER ==========
 def make_supervisor_node(llm, members: list[str]):
-    """Create a supervisor node that routes to team members"""
+    """Create a supervisor node that routes to team members
+    
+    Includes 2-FAILED-DELEGATION circuit breaker to prevent infinite loops.
+    """
     options = ["FINISH"] + members
     
     # Build descriptions for each worker based on their name
@@ -176,11 +214,21 @@ ROUTING RULES (CRITICAL):
 4. For conversational inputs, DEFAULT TO FINISH (let root respond naturally)
 5. Only delegate when user needs specific expertise/tools
 
+⚠️ CIRCUIT BREAKER POLICY (SYSTEM-WIDE):
+- Maximum of {MAX_DELEGATION_FAILURES} failed delegations per worker per conversation
+- Applies to ALL delegations: subagents AND tool calls
+- After {MAX_DELEGATION_FAILURES} failures, circuit breaker trips → conversation ENDS
+- Failure = worker reports error/limitation OR tool fails OR task incomplete
+
 TERMINATE (respond with FINISH) when:
 a. User input is conversational (greeting, thanks, simple question)
 b. A worker just provided a complete answer
 c. The user's request is fully satisfied
-d. A worker reports an error
+d. A worker reports ERROR, LIMITATION, or INABILITY:
+   - Contains: "cannot", "can't", "unable to", "don't have", "do not have", "no ability"
+   - Worker explicitly states they cannot handle the request
+   - DO NOT re-route to same or different worker - just FINISH and let user see the limitation
+e. Circuit breaker trips (worker failed {MAX_DELEGATION_FAILURES}+ times)
 
 Your available workers: {members}
 Respond ONLY with the worker name OR 'FINISH'."""
@@ -190,6 +238,21 @@ Respond ONLY with the worker name OR 'FINISH'."""
         next: Literal[tuple(options)]
     
     def supervisor_node(state: State) -> Command[Literal[tuple(members + ["__end__"])]]:
+        # Check if last message indicates error/limitation from a worker
+        last_message = state["messages"][-1] if state["messages"] else None
+        if last_message and hasattr(last_message, 'name') and hasattr(last_message, 'content'):
+            worker_name = last_message.name if hasattr(last_message, 'name') else "unknown"
+            content_lower = last_message.content.lower()
+            error_indicators = ["cannot", "can't", "unable to", "don't have", "do not have", "no ability", "not able to"]
+            
+            if any(indicator in content_lower for indicator in error_indicators):
+                # Worker reported limitation - record failure and stop
+                failure_reason = f"Worker reported limitation: {last_message.content[:200]}"
+                update_data = record_delegation_failure(state, worker_name, failure_reason)
+                update_data["next"] = "FINISH"
+                
+                return Command(goto=END, update=update_data)
+        
         # Include routing recommendations from conversational agent if available
         messages = [{"role": "system", "content": system_prompt}]
         
@@ -203,8 +266,29 @@ Respond ONLY with the worker name OR 'FINISH'."""
         messages.extend(state["messages"])
         response = llm.with_structured_output(Router).invoke(messages)
         goto = response["next"]
+        
         if goto == "FINISH":
             goto = END
+            return Command(goto=goto, update={"next": goto})
+        
+        # CIRCUIT BREAKER: Check if target worker has failed too many times
+        can_delegate, breaker_reason = check_circuit_breaker(state, goto)
+        if not can_delegate:
+            # Circuit breaker tripped - stop delegation
+            print(f"🔴 {breaker_reason}")
+            # Add circuit breaker message to conversation
+            circuit_breaker_msg = HumanMessage(
+                content=f"⚠️ Safety limit reached: {goto} has failed {MAX_DELEGATION_FAILURES}+ times. I cannot complete this request with current tools. Please try a different approach or contact support.",
+                name="system"
+            )
+            return Command(
+                goto=END,
+                update={
+                    "next": "FINISH",
+                    "messages": [circuit_breaker_msg]
+                }
+            )
+        
         return Command(goto=goto, update={"next": goto})
     
     return supervisor_node
