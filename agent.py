@@ -74,6 +74,7 @@ def run_query(query: str, parameters: dict = None):
 class State(MessagesState):
     """State shared across all hierarchical levels"""
     next: str
+    routing_recommendations: str  # Conversational agent's routing suggestions
 
 
 # ========== SUPERVISOR HELPER ==========
@@ -134,17 +135,25 @@ def make_supervisor_node(llm, members: list[str]):
     
     examples_text = "\n".join([f"  {ex}" for ex in routing_examples]) if routing_examples else "  (no examples for this team)"
     
-    system_prompt = f"""You are a conversational supervisor for a restaurant operations assistant.
+    system_prompt = f"""You are a routing supervisor for a restaurant operations assistant.
 
-YOUR DUAL ROLE:
-1. CONVERSATIONAL: Handle greetings, acknowledgments, general questions directly (respond with FINISH)
-2. TASK DELEGATOR: Route specific tasks to specialized workers
+YOUR ROLE: Make final routing decisions based on:
+1. User's request
+2. Conversation history
+3. Routing recommendations from the conversational agent (if provided)
 
 AVAILABLE WORKERS:
 {worker_info}
 
 ROUTING EXAMPLES:
 {examples_text}
+
+ROUTING RECOMMENDATIONS:
+The conversational agent may provide routing suggestions in the state. Consider these as helpful guidance, but make your own decision based on:
+- User's actual needs
+- Worker capabilities and tools
+- Current conversation context
+- Your judgment as supervisor
 
 WHEN TO FINISH (respond directly, no delegation):
 - Greetings: "hello", "hi", "good morning"
@@ -181,7 +190,17 @@ Respond ONLY with the worker name OR 'FINISH'."""
         next: Literal[tuple(options)]
     
     def supervisor_node(state: State) -> Command[Literal[tuple(members + ["__end__"])]]:
-        messages = [{"role": "system", "content": system_prompt}] + state["messages"]
+        # Include routing recommendations from conversational agent if available
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add routing recommendations as context if provided
+        if state.get("routing_recommendations"):
+            messages.append({
+                "role": "system", 
+                "content": f"ROUTING RECOMMENDATIONS FROM CONVERSATIONAL AGENT:\n{state['routing_recommendations']}\n\nConsider these suggestions but make your own final decision."
+            })
+        
+        messages.extend(state["messages"])
         response = llm.with_structured_output(Router).invoke(messages)
         goto = response["next"]
         if goto == "FINISH":
@@ -797,13 +816,13 @@ chef_team_graph = chef_builder.compile()
 # Root agent handles all conversation directly - no separate speaker layer
 # Flow: START → conversational_responder → supervisor (if needed) → workers → END
 
-# Create a conversational agent for root-level responses
+# Create a conversational agent for root-level responses AND routing recommendations
 conversational_agent = create_react_agent(
     llm,
     [],  # No tools - pure conversation
-    prompt="""You are ROA, a friendly and professional restaurant operations assistant.
+    prompt="""You are ROA, a friendly and professional restaurant operations assistant with full conversation awareness.
 
-ROLE: Handle direct conversation with kitchen staff and restaurant operators.
+ROLE: Handle direct conversation AND provide routing recommendations for complex requests.
 STYLE: Natural, helpful, concise, professional
 
 You can:
@@ -813,17 +832,55 @@ You can:
 - Acknowledge user feedback
 - Respond to simple questions
 
-For specific tasks (recipes, inventory, visualizations, team management), your supervisor will route to specialized workers.
+For complex requests, you understand the FULL conversation context and can recommend sophisticated routing strategies.
 
 RULES:
 1. Be warm and professional
 2. Keep responses concise (2-3 sentences max for simple interactions)
 3. Don't make up data - if you need specific info, say so
-4. For complex requests, confirm you'll help and let the supervisor handle routing"""
+4. For complex requests, confirm you'll help and provide routing guidance"""
+)
+
+# Create a routing planner that analyzes requests and suggests routing
+routing_planner = create_react_agent(
+    llm,
+    [],  # No tools - just analysis
+    prompt="""You are a routing planner for a restaurant operations assistant.
+
+AVAILABLE WORKERS:
+- visualization: Creates visual displays (recipes, graphs, team assignments, forecasts)
+- marketing: Generates promotional content
+- chef_team: Handles ALL kitchen operations (recipes, inventory, team, sales)
+  └─ Sub-teams: kitchen_team (recipes/team/dishes), inventory_team (stock/suppliers/forecasts), sales_team (cost analysis)
+- builder_team: Development tools (code generation)
+
+YOUR ROLE: Analyze user requests in context of the full conversation and suggest routing strategies.
+
+Consider:
+1. What is the user actually asking for?
+2. What data/tools are needed?
+3. Could this benefit from multiple agents? (e.g., get recipe + visualize it)
+4. What's the logical sequence if multiple agents needed?
+
+OUTPUT FORMAT:
+Provide clear, concise routing recommendations:
+- Single agent: "Route to [agent_name] because [reason]"
+- Multiple agents: "Suggested sequence: 1) [agent] for [task], 2) [agent] for [task]"
+- Uncertain: "Recommend [agent] but may need [alternative] if [condition]"
+
+Examples:
+- "get Arroz Sushi recipe" → "Route to chef_team (kitchen_team → recipe) to search Neo4j database"
+- "show me pasta recipes visually" → "Sequence: 1) chef_team (recipes) to get data, 2) visualization to display"
+- "what's in stock and create a forecast chart" → "Sequence: 1) chef_team (inventory) for stock data, 2) chef_team (analysis) for forecast, 3) visualization for chart"
+"""
 )
 
 def conversational_responder_node(state: State) -> Command[Literal["supervisor", "__end__"]]:
-    """Handle initial conversation and decide if delegation is needed"""
+    """Handle initial conversation and decide if delegation is needed
+    
+    For simple conversation: Respond directly and end
+    For complex requests: Generate routing recommendations and pass to supervisor
+    """
     last_message = state["messages"][-1]
     
     # Simple conversational inputs - respond directly and end
@@ -841,8 +898,16 @@ def conversational_responder_node(state: State) -> Command[Literal["supervisor",
             goto=END
         )
     else:
-        # Route to supervisor for task delegation
-        return Command(goto="supervisor")
+        # Complex request - generate routing recommendations
+        # The routing planner has full conversation context and can suggest sophisticated strategies
+        routing_result = routing_planner.invoke(state)
+        routing_recommendations = routing_result["messages"][-1].content
+        
+        # Pass recommendations to supervisor for final decision
+        return Command(
+            update={"routing_recommendations": routing_recommendations},
+            goto="supervisor"
+        )
 
 def call_builder_team(state: State) -> Command[Literal["supervisor"]]:
     response = builder_team_graph.invoke({"messages": state["messages"]})
