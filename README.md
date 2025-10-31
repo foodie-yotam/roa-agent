@@ -10,32 +10,42 @@ Hierarchical multi-agent system with proper code organization:
 ## Structure
 
 ```
-src/
-├── shared/                    # Shared utilities
-│   ├── state.py              # State definition
-│   ├── supervisor.py         # Supervisor routing logic
-│   └── db.py                 # Neo4j connection
-│
-├── teams/                     # Team hierarchies
-│   ├── speaker/              # Speaker team
-│   │   ├── agents/
-│   │   │   ├── voice.py     # Voice agent (individual tool nodes)
-│   │   │   ├── video.py     # Video agent (individual tool nodes)
-│   │   │   └── marketing.py # Marketing agent
-│   │   ├── tools.py         # Team's tools
-│   │   └── team.py          # Team graph (supervisor + agents)
+agent/
+├── src/                       # Source code
+│   ├── shared/               # Shared utilities
+│   │   ├── state.py         # State definition
+│   │   ├── supervisor.py    # Supervisor routing logic
+│   │   └── db.py            # Neo4j connection
 │   │
-│   ├── chef/                 # Chef meta-team
-│   │   ├── kitchen/         # Kitchen subteam
-│   │   ├── inventory/       # Inventory subteam
-│   │   └── sales/           # Sales subteam
-│   │
-│   └── builder/             # Builder team (dev tools)
+│   └── teams/               # Team hierarchies
+│       ├── chef/            # Chef meta-team
+│       │   ├── kitchen/     # Kitchen subteam (recipes, team, dishes)
+│       │   ├── inventory/   # Inventory subteam (stock, suppliers, forecasts)
+│       │   └── sales/       # Sales subteam (cost analysis)
+│       │
+│       ├── builder/         # Builder team (dev tools)
+│       ├── visualization/   # Visualization team (React Flow displays)
+│       └── marketing/       # Marketing team (content generation)
 │
-└── agent.py                  # Root graph orchestration
-
-langgraph.json               # LangGraph Cloud config
-test_local.py               # Local testing with LangSmith
+├── agent.py                  # Root graph orchestration (MAIN FILE)
+├── langgraph.json           # LangGraph Cloud config
+├── requirements.txt         # Python dependencies
+│
+├── scripts/                 # Debug & analysis scripts
+│   ├── query_hierarchy.py   # LangSmith trace analysis (MOST USEFUL)
+│   ├── query_langsmith.py   # Basic run queries
+│   └── check_deployment.py  # Deployment status
+│
+├── tests/                   # Test suite
+│   ├── test_local.py        # Local testing
+│   ├── test_deployed.py     # Deployment testing
+│   └── test_neo4j.py        # Database testing
+│
+├── ROA-CONVOS/             # Conversation logs & analysis
+│   ├── hierarchy_*.txt      # Full trace hierarchies
+│   └── ANALYSIS.md          # Bug analysis & findings
+│
+└── trash/                   # Deprecated files (safe to delete)
 ```
 
 ## Key Features
