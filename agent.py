@@ -84,39 +84,48 @@ class State(MessagesState):
 MAX_SAME_WORKER_ATTEMPTS = 2  # Don't retry same worker more than 2x
 MAX_TOTAL_ATTEMPTS = 3  # Maximum routing attempts before admitting failure
 
-def build_tool_table(worker_tools: dict) -> str:
-    """Build comprehensive tool visibility table for supervisor
+def build_tool_table(worker_tools: dict, detail_level: str = "full") -> str:
+    """Build tool visibility table with hierarchical abstraction
     
     Args:
-        worker_tools: {"worker_name": [list of tool objects]}
+        worker_tools: {"worker_name": [list of tool objects] or "description": str}
+        detail_level: "full" (direct reports) or "abstract" (grandchildren teams)
         
     Returns:
-        Formatted table with agent_name, tool_name, tool_description, examples
+        Formatted table - detailed for direct reports, abstract for distant teams
     """
     table = "\n" + "="*100 + "\n"
-    table += "AVAILABLE TOOLS (by Worker):\n"
+    table += "AVAILABLE CAPABILITIES (by Worker):\n"
     table += "="*100 + "\n\n"
     
-    for worker_name, tools in worker_tools.items():
+    for worker_name, worker_info in worker_tools.items():
         table += f"📦 {worker_name.upper()}:\n"
         table += "-" * 100 + "\n"
         
-        if not tools:
-            table += "  (No tools - delegates to subagents)\n\n"
-            continue
+        # Check if this is abstract (team description) or detailed (tool list)
+        if isinstance(worker_info, str):
+            # Abstract description for distant teams
+            table += f"  {worker_info}\n\n"
+        elif isinstance(worker_info, list):
+            # Detailed tool list for direct reports
+            tools = worker_info
             
-        for tool in tools:
-            tool_name = tool.name
-            tool_desc = tool.description.split("\n")[0] if tool.description else "No description"
-            
-            table += f"  🔧 {tool_name}\n"
-            table += f"     Description: {tool_desc}\n"
-            
-            # Extract args from tool schema if available
-            if hasattr(tool, 'args_schema') and tool.args_schema:
-                table += f"     Args: {list(tool.args_schema.__fields__.keys())}\n"
-            
-            table += "\n"
+            if not tools:
+                table += "  (No direct tools - delegates to subagents)\n\n"
+                continue
+                
+            for tool in tools:
+                tool_name = tool.name
+                tool_desc = tool.description.split("\n")[0] if tool.description else "No description"
+                
+                table += f"  🔧 {tool_name}\n"
+                table += f"     Description: {tool_desc}\n"
+                
+                # Extract args from tool schema if available
+                if hasattr(tool, 'args_schema') and tool.args_schema:
+                    table += f"     Args: {list(tool.args_schema.__fields__.keys())}\n"
+                
+                table += "\n"
         
     table += "="*100 + "\n"
     return table
@@ -1001,11 +1010,12 @@ def call_sales_team(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-# Chef supervisor sees ALL tools from subteams
+# Chef supervisor sees ABSTRACT descriptions (not granular tools)
+# Direct reports are teams, so show capabilities not individual tools
 chef_supervisor = make_supervisor_node(llm, ["kitchen_team", "inventory_team", "sales_team"], worker_tools={
-    "kitchen_team": [search_recipes, get_recipe_details, get_team_members, assign_task, suggest_dishes],
-    "inventory_team": [check_stock, list_suppliers, forecast_demand],
-    "sales_team": [calculate_cost]
+    "kitchen_team": "Manages recipes, team assignments, and dish planning. Handles: searching recipes, getting recipe details, managing team members, and suggesting new dishes.",
+    "inventory_team": "Tracks inventory and supplier relationships. Handles: checking stock levels, listing suppliers, and forecasting demand.",
+    "sales_team": "Analyzes costs and profitability. Handles: calculating recipe costs and profit margins."
 })
 
 chef_builder = StateGraph(State)
@@ -1130,12 +1140,13 @@ def call_chef_team(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-# Root supervisor sees ALL tools from entire system
+# Root supervisor sees VERY ABSTRACT descriptions (2+ layers from tools)
+# Only knows general purpose of each top-level team
 root_supervisor = make_supervisor_node(llm, ["visualization", "marketing", "builder_team", "chef_team"], worker_tools={
-    "visualization": [display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment],
-    "marketing": [create_marketing_content],
-    "builder_team": [generate_tool_code],
-    "chef_team": [search_recipes, get_recipe_details, get_team_members, assign_task, suggest_dishes, check_stock, list_suppliers, forecast_demand, calculate_cost]
+    "visualization": [display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment],  # Direct report - keep detailed
+    "marketing": [create_marketing_content],  # Direct report - keep detailed
+    "builder_team": [generate_tool_code],  # Direct report - keep detailed
+    "chef_team": "Handles ALL kitchen operations: recipes, inventory, team management, cost analysis, and sales planning. Delegates to specialized subteams."  # Meta-team - abstract!
 })
 
 root_builder = StateGraph(State)
