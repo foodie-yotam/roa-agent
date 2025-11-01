@@ -492,38 +492,51 @@ def generate_tool_code(tool_name: str, description: str) -> str:
     """Generate Python tool code"""
     return f"CODE: @tool\\ndef {tool_name}(): pass  # {description}"
 
-# --- Recipe Tools (REAL - from v2) with Fuzzy Matching ---
+# --- Recipe Tools (REAL - from v2) with Optional Fuzzy Matching ---
 @tool
 def search_recipes(kitchen_name: Optional[str] = None, recipe_name: Optional[str] = None) -> str:
-    """Search for recipes with fuzzy matching support"""
+    """Search for recipes with optional fuzzy matching support"""
     try:
-        from rapidfuzz import fuzz, process
-        
         if recipe_name:
-            # Get all recipes to fuzzy match against
-            if kitchen_name:
-                query = "MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe"
-                results = run_query(query, {"kitchen_name": kitchen_name})
-            else:
-                query = "MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe LIMIT 100"
-                results = run_query(query)
-            
-            if not results:
-                return "No recipes found in database"
-            
-            # Extract recipe names for fuzzy matching
-            recipe_names = [r['recipe'] for r in results]
-            
-            # Find best matches (threshold 70% similarity)
-            matches = process.extract(recipe_name, recipe_names, scorer=fuzz.ratio, limit=5)
-            good_matches = [(name, score) for name, score, _ in matches if score >= 70]
-            
-            if good_matches:
-                # Return matching recipes with confidence scores
-                match_info = "\n".join([f"  - {name} (match: {score}%)" for name, score in good_matches])
-                return f"Found {len(good_matches)} matching recipes:\n{match_info}"
-            else:
-                return f"No recipes found matching '{recipe_name}'. Try: {', '.join(recipe_names[:5])}"
+            # Try fuzzy matching IF rapidfuzz is available
+            try:
+                from rapidfuzz import fuzz, process
+                
+                # Get all recipes to fuzzy match against
+                if kitchen_name:
+                    query = "MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe"
+                    results = run_query(query, {"kitchen_name": kitchen_name})
+                else:
+                    query = "MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe LIMIT 100"
+                    results = run_query(query)
+                
+                if not results:
+                    return "No recipes found in database"
+                
+                # Extract recipe names for fuzzy matching
+                recipe_names = [r['recipe'] for r in results]
+                
+                # Find best matches (threshold 70% similarity)
+                matches = process.extract(recipe_name, recipe_names, scorer=fuzz.ratio, limit=5)
+                good_matches = [(name, score) for name, score, _ in matches if score >= 70]
+                
+                if good_matches:
+                    # Return matching recipes with confidence scores
+                    match_info = "\n".join([f"  - {name} (match: {score}%)" for name, score in good_matches])
+                    return f"Found {len(good_matches)} matching recipes:\n{match_info}"
+                else:
+                    return f"No recipes found matching '{recipe_name}'. Try: {', '.join(recipe_names[:5])}"
+                    
+            except ImportError:
+                # rapidfuzz not available - try exact match only
+                if kitchen_name:
+                    query = "MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe) WHERE r.name CONTAINS $recipe_name RETURN k.name as kitchen, r.name as recipe"
+                    results = run_query(query, {"kitchen_name": kitchen_name, "recipe_name": recipe_name})
+                else:
+                    query = "MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe) WHERE r.name CONTAINS $recipe_name RETURN k.name as kitchen, r.name as recipe LIMIT 20"
+                    results = run_query(query, {"recipe_name": recipe_name})
+                
+                return f"Found {len(results)} recipes: {results}" if results else f"No recipes matching '{recipe_name}' found. Fuzzy matching unavailable - use exact spelling."
         
         elif kitchen_name:
             query = "MATCH (k:Kitchen {name: $kitchen_name})-[:HAS_RECIPE]->(r:Recipe) RETURN k.name as kitchen, r.name as recipe"
@@ -533,18 +546,14 @@ def search_recipes(kitchen_name: Optional[str] = None, recipe_name: Optional[str
             results = run_query(query)
         
         return f"Found {len(results)} recipes: {results}" if results else "No recipes found"
-    except ImportError as e:
-        raise ImportError(f"rapidfuzz library not installed: {e}. Run: pip install rapidfuzz")
     except Exception as e:
         error_msg = f"RecipeSearchError: Failed searching recipes (kitchen={kitchen_name}, recipe={recipe_name}). Error: {type(e).__name__}: {str(e)}"
         return error_msg  # Return error as string so agent can see it, but it will show in traces
 
 @tool
 def get_recipe_details(recipe_name: str, kitchen_name: Optional[str] = None) -> str:
-    """Get recipe details with fuzzy matching fallback"""
+    """Get recipe details with optional fuzzy matching fallback"""
     try:
-        from rapidfuzz import fuzz, process
-        
         # Try exact match first
         query = """
         MATCH (k:Kitchen)-[:HAS_RECIPE]->(r:Recipe {name: $recipe_name})
@@ -557,33 +566,38 @@ def get_recipe_details(recipe_name: str, kitchen_name: Optional[str] = None) -> 
         if results:
             return f"Recipe: {results[0]}"
         
-        # Exact match failed - try fuzzy matching
-        # Get all recipe names
-        all_recipes_query = "MATCH (r:Recipe) RETURN r.name as name LIMIT 100"
-        all_recipes = run_query(all_recipes_query)
+        # Exact match failed - try fuzzy matching IF rapidfuzz is available
+        try:
+            from rapidfuzz import fuzz, process
+            
+            # Get all recipe names
+            all_recipes_query = "MATCH (r:Recipe) RETURN r.name as name LIMIT 100"
+            all_recipes = run_query(all_recipes_query)
+            
+            if not all_recipes:
+                return "No recipes found in database"
+            
+            recipe_names = [r['name'] for r in all_recipes]
+            
+            # Find best match
+            best_match = process.extractOne(recipe_name, recipe_names, scorer=fuzz.ratio)
+            
+            if best_match and best_match[1] >= 75:  # 75% similarity threshold
+                matched_name = best_match[0]
+                # Get details for the matched recipe
+                results = run_query(query, {"recipe_name": matched_name})
+                if results:
+                    return f"Found similar recipe '{matched_name}' (you searched for '{recipe_name}'):\n{results[0]}"
+            
+            # Still no match - suggest alternatives
+            suggestions = process.extract(recipe_name, recipe_names, scorer=fuzz.ratio, limit=3)
+            suggestion_text = ", ".join([name for name, score, _ in suggestions])
+            return f"Recipe '{recipe_name}' not found. Did you mean: {suggestion_text}?"
+            
+        except ImportError:
+            # rapidfuzz not available - just return "not found" without fuzzy matching
+            return f"Recipe '{recipe_name}' not found. Please check the exact spelling (case-sensitive). Fuzzy matching unavailable."
         
-        if not all_recipes:
-            return "No recipes found in database"
-        
-        recipe_names = [r['name'] for r in all_recipes]
-        
-        # Find best match
-        best_match = process.extractOne(recipe_name, recipe_names, scorer=fuzz.ratio)
-        
-        if best_match and best_match[1] >= 75:  # 75% similarity threshold
-            matched_name = best_match[0]
-            # Get details for the matched recipe
-            results = run_query(query, {"recipe_name": matched_name})
-            if results:
-                return f"Found similar recipe '{matched_name}' (you searched for '{recipe_name}'):\n{results[0]}"
-        
-        # Still no match - suggest alternatives
-        suggestions = process.extract(recipe_name, recipe_names, scorer=fuzz.ratio, limit=3)
-        suggestion_text = ", ".join([name for name, score, _ in suggestions])
-        return f"Recipe '{recipe_name}' not found. Did you mean: {suggestion_text}?"
-        
-    except ImportError as e:
-        raise ImportError(f"rapidfuzz library not installed: {e}. Run: pip install rapidfuzz")
     except Exception as e:
         error_msg = f"RecipeDetailsError: Failed getting details for '{recipe_name}'. Error: {type(e).__name__}: {str(e)}"
         return error_msg  # Return error as string so agent can see it, but it will show in traces
