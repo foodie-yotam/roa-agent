@@ -75,41 +75,116 @@ class State(MessagesState):
     """State shared across all hierarchical levels"""
     next: str
     routing_recommendations: str  # Conversational agent's routing suggestions
-    delegation_failures: dict  # Track failed delegations: {"worker_name": failure_count}
+    delegation_path: list  # Track current delegation path: ["supervisor", "chef_team", "recipe"]
+    failed_paths: list  # Track failed delegation paths: [["supervisor", "chef_team"], ...]
+    attempts_at_level: dict  # Track attempts per supervisor level: {"supervisor": 2, "chef_team->supervisor": 1}
 
 
-# ========== CIRCUIT BREAKER ==========
-MAX_DELEGATION_FAILURES = 2  # Maximum failed attempts before circuit breaker trips
+# ========== CIRCUIT BREAKER - Tree Traversal with Backtracking ==========
+MAX_ATTEMPTS_PER_LEVEL = 2  # Maximum attempts at each supervisor level before escalating up
+MAX_TOTAL_PATH_FAILURES = 5  # Maximum failed paths before giving up entirely
 
-def check_circuit_breaker(state: State, worker_name: str) -> tuple[bool, str]:
-    """Check if worker has exceeded failure limit
+def get_delegation_level_key(state: State) -> str:
+    """Get unique key for current delegation level
+    
+    Examples:
+        ["root"] -> "root"
+        ["root", "chef_team"] -> "root->chef_team"
+        ["root", "chef_team", "recipe"] -> "root->chef_team->recipe"
+    """
+    path = state.get("delegation_path", [])
+    return "->".join(path) if path else "root"
+
+def check_circuit_breaker(state: State, worker_name: str, supervisor_name: str) -> tuple[bool, str, str]:
+    """Check if we should allow delegation (tree traversal logic)
     
     Returns:
-        (can_delegate: bool, reason: str)
+        (can_delegate: bool, reason: str, action: str)
+        action: "allow" | "try_alternative" | "escalate_up" | "fail"
     """
-    delegation_failures = state.get("delegation_failures", {})
-    failure_count = delegation_failures.get(worker_name, 0)
+    # Get current delegation level
+    level_key = get_delegation_level_key(state)
+    attempts_at_level = state.get("attempts_at_level", {})
+    failed_paths = state.get("failed_paths", [])
     
-    if failure_count >= MAX_DELEGATION_FAILURES:
-        return (False, f"CIRCUIT BREAKER: {worker_name} has failed {failure_count} times (limit: {MAX_DELEGATION_FAILURES}). Stopping delegation to prevent infinite loop.")
+    # Check total failed paths (global circuit breaker)
+    if len(failed_paths) >= MAX_TOTAL_PATH_FAILURES:
+        return (False, f"GLOBAL CIRCUIT BREAKER: {len(failed_paths)} paths failed (limit: {MAX_TOTAL_PATH_FAILURES}). All alternatives exhausted.", "fail")
     
-    return (True, "")
+    # Check attempts at this specific level
+    level_attempts = attempts_at_level.get(level_key, 0)
+    
+    if level_attempts >= MAX_ATTEMPTS_PER_LEVEL:
+        # This supervisor has tried enough - should escalate up to parent
+        return (False, f"LOCAL CIRCUIT BREAKER: {level_attempts} attempts at level '{level_key}' (limit: {MAX_ATTEMPTS_PER_LEVEL}). Escalating to parent supervisor.", "escalate_up")
+    
+    # Check if this specific path was already tried and failed
+    current_path = state.get("delegation_path", [])
+    potential_path = current_path + [worker_name]
+    
+    if potential_path in failed_paths:
+        # This exact path failed before - try alternative at same level
+        return (False, f"Path {' -> '.join(potential_path)} already failed. Trying alternative.", "try_alternative")
+    
+    # Safe to delegate
+    return (True, "", "allow")
+
+def record_delegation_attempt(state: State, worker_name: str) -> dict:
+    """Record that we're attempting to delegate to worker
+    
+    Updates delegation path and attempt counter.
+    """
+    current_path = state.get("delegation_path", []).copy()
+    new_path = current_path + [worker_name]
+    
+    level_key = get_delegation_level_key(state)
+    attempts_at_level = state.get("attempts_at_level", {}).copy()
+    attempts_at_level[level_key] = attempts_at_level.get(level_key, 0) + 1
+    
+    print(f"📍 DELEGATION: {' -> '.join(new_path)} (attempt #{attempts_at_level[level_key]} at level '{level_key}')")
+    
+    return {
+        "delegation_path": new_path,
+        "attempts_at_level": attempts_at_level
+    }
 
 def record_delegation_failure(state: State, worker_name: str, reason: str) -> dict:
-    """Record a failed delegation attempt
+    """Record a failed delegation - mark path as failed, allow backtracking
     
     Failures are detected when:
     - Worker reports error/limitation ("cannot", "unable to", etc.)
     - Tool call fails
     - Worker returns without completing task
     """
-    delegation_failures = state.get("delegation_failures", {}).copy()
-    delegation_failures[worker_name] = delegation_failures.get(worker_name, 0) + 1
+    current_path = state.get("delegation_path", [])
+    failed_paths = state.get("failed_paths", []).copy()
     
-    print(f"⚠️  DELEGATION FAILURE: {worker_name} failed (attempt #{delegation_failures[worker_name]}, limit: {MAX_DELEGATION_FAILURES})")
+    # Mark this path as failed
+    if current_path and current_path not in failed_paths:
+        failed_paths.append(current_path.copy())
+    
+    print(f"❌ PATH FAILED: {' -> '.join(current_path)}")
     print(f"   Reason: {reason}")
+    print(f"   Total failed paths: {len(failed_paths)}/{MAX_TOTAL_PATH_FAILURES}")
     
-    return {"delegation_failures": delegation_failures}
+    # Pop back one level (backtrack)
+    new_path = current_path[:-1] if current_path else []
+    
+    return {
+        "failed_paths": failed_paths,
+        "delegation_path": new_path  # Backtrack
+    }
+
+def record_delegation_success(state: State) -> dict:
+    """Record successful delegation - reset counters for this branch"""
+    current_path = state.get("delegation_path", [])
+    print(f"✅ PATH SUCCESS: {' -> '.join(current_path)}")
+    
+    # Reset delegation path (task complete)
+    return {
+        "delegation_path": [],
+        "attempts_at_level": {}  # Reset attempts
+    }
 
 
 # ========== SUPERVISOR HELPER ==========
@@ -214,21 +289,27 @@ ROUTING RULES (CRITICAL):
 4. For conversational inputs, DEFAULT TO FINISH (let root respond naturally)
 5. Only delegate when user needs specific expertise/tools
 
-⚠️ CIRCUIT BREAKER POLICY (SYSTEM-WIDE):
-- Maximum of {MAX_DELEGATION_FAILURES} failed delegations per worker per conversation
-- Applies to ALL delegations: subagents AND tool calls
-- After {MAX_DELEGATION_FAILURES} failures, circuit breaker trips → conversation ENDS
-- Failure = worker reports error/limitation OR tool fails OR task incomplete
+⚠️ CIRCUIT BREAKER POLICY (Tree Traversal with Backtracking):
+- Maximum {MAX_ATTEMPTS_PER_LEVEL} attempts PER SUPERVISOR LEVEL before escalating up
+- Maximum {MAX_TOTAL_PATH_FAILURES} total failed paths before global failure
+- When worker fails → BACKTRACK and try ALTERNATIVE worker at same level
+- When level exhausted → ESCALATE UP to parent supervisor
+- Treat delegation tree like search algorithm (Dijkstra/A*):
+  * Each supervisor explores different branches (workers)
+  * Failed branch → try alternative branch
+  * All branches failed → escalate to parent
+  * Global limit prevents infinite exploration
 
 TERMINATE (respond with FINISH) when:
 a. User input is conversational (greeting, thanks, simple question)
 b. A worker just provided a complete answer
 c. The user's request is fully satisfied
-d. A worker reports ERROR, LIMITATION, or INABILITY:
-   - Contains: "cannot", "can't", "unable to", "don't have", "do not have", "no ability"
-   - Worker explicitly states they cannot handle the request
-   - DO NOT re-route to same or different worker - just FINISH and let user see the limitation
-e. Circuit breaker trips (worker failed {MAX_DELEGATION_FAILURES}+ times)
+d. Global circuit breaker trips ({MAX_TOTAL_PATH_FAILURES} paths exhausted)
+
+When worker fails (reports "cannot", "can't", "unable to", "don't have"):
+→ Record failure, BACKTRACK, try ALTERNATIVE worker
+→ Only terminate if all alternatives exhausted at your level
+→ Then escalate to parent supervisor for different approach
 
 Your available workers: {members}
 Respond ONLY with the worker name OR 'FINISH'."""
@@ -238,6 +319,8 @@ Respond ONLY with the worker name OR 'FINISH'."""
         next: Literal[tuple(options)]
     
     def supervisor_node(state: State) -> Command[Literal[tuple(members + ["__end__"])]]:
+        supervisor_name = state.get("delegation_path", [])[-1] if state.get("delegation_path") else "root"
+        
         # Check if last message indicates error/limitation from a worker
         last_message = state["messages"][-1] if state["messages"] else None
         if last_message and hasattr(last_message, 'name') and hasattr(last_message, 'content'):
@@ -246,12 +329,12 @@ Respond ONLY with the worker name OR 'FINISH'."""
             error_indicators = ["cannot", "can't", "unable to", "don't have", "do not have", "no ability", "not able to"]
             
             if any(indicator in content_lower for indicator in error_indicators):
-                # Worker reported limitation - record failure and stop
+                # Worker reported limitation - record failure and BACKTRACK
                 failure_reason = f"Worker reported limitation: {last_message.content[:200]}"
                 update_data = record_delegation_failure(state, worker_name, failure_reason)
-                update_data["next"] = "FINISH"
                 
-                return Command(goto=END, update=update_data)
+                # Don't immediately END - let supervisor try alternative
+                print(f"🔄 BACKTRACKING: Supervisor will try alternative route...")
         
         # Include routing recommendations from conversational agent if available
         messages = [{"role": "system", "content": system_prompt}]
@@ -268,28 +351,47 @@ Respond ONLY with the worker name OR 'FINISH'."""
         goto = response["next"]
         
         if goto == "FINISH":
-            goto = END
-            return Command(goto=goto, update={"next": goto})
+            # Task complete - record success
+            success_data = record_delegation_success(state)
+            success_data["next"] = goto
+            return Command(goto=END, update=success_data)
         
-        # CIRCUIT BREAKER: Check if target worker has failed too many times
-        can_delegate, breaker_reason = check_circuit_breaker(state, goto)
+        # CIRCUIT BREAKER: Check if we can delegate to this worker
+        can_delegate, breaker_reason, action = check_circuit_breaker(state, goto, supervisor_name)
+        
         if not can_delegate:
-            # Circuit breaker tripped - stop delegation
-            print(f"🔴 {breaker_reason}")
-            # Add circuit breaker message to conversation
-            circuit_breaker_msg = HumanMessage(
-                content=f"⚠️ Safety limit reached: {goto} has failed {MAX_DELEGATION_FAILURES}+ times. I cannot complete this request with current tools. Please try a different approach or contact support.",
-                name="system"
-            )
-            return Command(
-                goto=END,
-                update={
-                    "next": "FINISH",
-                    "messages": [circuit_breaker_msg]
-                }
-            )
+            print(f"⚠️ {breaker_reason}")
+            
+            if action == "fail":
+                # Global circuit breaker - all paths exhausted
+                circuit_breaker_msg = HumanMessage(
+                    content=f"⚠️ I've exhausted all available approaches ({len(state.get('failed_paths', []))} attempts). I cannot complete this request with current tools. Please try a different request or contact support.",
+                    name="system"
+                )
+                return Command(
+                    goto=END,
+                    update={
+                        "next": "FINISH",
+                        "messages": [circuit_breaker_msg]
+                    }
+                )
+            
+            elif action == "escalate_up":
+                # Local circuit breaker - escalate to parent
+                # Supervisor tried enough times, finish and let parent decide
+                return Command(goto=END, update={"next": "FINISH"})
+            
+            elif action == "try_alternative":
+                # This specific path failed before - supervisor should try different worker
+                # Let LLM run again to pick alternative
+                print(f"🔄 Asking supervisor to consider alternative worker...")
+                # Continue to delegation (LLM should pick different worker)
         
-        return Command(goto=goto, update={"next": goto})
+        # Record delegation attempt (add to path)
+        attempt_data = record_delegation_attempt(state, goto)
+        attempt_data["next"] = goto
+        
+        return Command(goto=goto, update=attempt_data)
     
     return supervisor_node
 
