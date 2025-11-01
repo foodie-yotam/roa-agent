@@ -1,8 +1,17 @@
-# ⚡ Circuit Breaker System - 2-Failed-Delegation Limit
+# ⚡ Circuit Breaker System - Tree Traversal with Backtracking
 
 ## 🎯 Purpose
 
-**Prevent infinite loops** by limiting failed delegations to any worker (subagent or tool) to a maximum of **2 attempts** per conversation.
+**Prevent infinite loops** while **allowing intelligent exploration** of alternative workers through tree traversal with backtracking.
+
+**⚠️ DEPRECATED APPROACH:** This document describes the OLD rigid blocking approach. See **TREE_TRAVERSAL.md** for the NEW intelligent tree search approach.
+
+---
+
+## 🔄 Evolution
+
+**v1 (This Doc - DEPRECATED):** Block worker after 2 failures → system collapse  
+**v2 (TREE_TRAVERSAL.md - CURRENT):** Backtrack & try alternatives → intelligent search
 
 ---
 
