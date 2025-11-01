@@ -34,6 +34,7 @@ from langgraph.prebuilt import create_react_agent
 from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.types import Command
 from neo4j import GraphDatabase
+from utils.node_factory import create_worker_node, create_team_caller
 
 # ========== CONFIGURATION ==========
 NEO4J_URI = os.getenv("NEO4J_URI")
@@ -77,10 +78,8 @@ class State(MessagesState):
     next: str
     routing_recommendations: str  # Conversational agent's routing suggestions
     delegation_path: list  # Track current delegation path: ["supervisor", "chef_team", "recipe"]
-    failed_paths: list  # Track failed delegation paths: [["supervisor", "chef_team"], ...]
     attempts_at_level: dict  # Track attempts per supervisor level: {"supervisor": 2, "chef_team->supervisor": 1}
     delegation_depth: int  # Track current delegation depth (0 = root, 1 = chef, 2 = kitchen, etc.)
-    max_delegation_depth: int  # Maximum allowed depth (default 4)
 
 
 # ========== CIRCUIT BREAKER - Simple Loop Prevention ==========
@@ -144,9 +143,8 @@ def check_circuit_breaker(state: State, worker_name: str) -> tuple[bool, str]:
     
     # Check delegation depth (prevent infinite hierarchy)
     current_depth = state.get("delegation_depth", 0)
-    max_depth = state.get("max_delegation_depth", MAX_DELEGATION_DEPTH)
-    if current_depth >= max_depth:
-        return (False, f"Circuit breaker: Max delegation depth ({max_depth}) reached. Escalating to human.")
+    if current_depth >= MAX_DELEGATION_DEPTH:
+        return (False, f"Circuit breaker: Max delegation depth ({MAX_DELEGATION_DEPTH}) reached. Escalating to human.")
     
     # Check total attempts (prevent exhaustive exploration)
     total_attempts = sum(attempts_at_level.values())
@@ -169,7 +167,6 @@ def record_delegation_attempt(state: State, worker_name: str) -> dict:
     attempts_at_level[worker_name] = attempts_at_level.get(worker_name, 0) + 1
     
     # Increment delegation depth
-    current_depth = state.get("delegation_depth", 0)
     new_depth = len(new_path)  # Depth = length of delegation path
     
     total_attempts = sum(attempts_at_level.values())
@@ -178,28 +175,22 @@ def record_delegation_attempt(state: State, worker_name: str) -> dict:
     return {
         "delegation_path": new_path,
         "attempts_at_level": attempts_at_level,
-        "delegation_depth": new_depth,
-        "max_delegation_depth": state.get("max_delegation_depth", MAX_DELEGATION_DEPTH)
+        "delegation_depth": new_depth
     }
 
-def record_delegation_failure(state: State, worker_name: str, reason: str) -> dict:
-    """Record a failed delegation
+def record_delegation_failure(state: State, worker_name: str, reason: str):
+    """Log a failed delegation
     
     Failures are detected when:
     - Worker reports error/limitation ("cannot", "unable to", etc.)
     - Tool call fails  
     - Worker returns without completing task
-    """
-    failed_paths = state.get("failed_paths", []).copy()
-    failed_paths.append(worker_name)
     
+    Note: This is for logging/observability only. Circuit breaker handles prevention.
+    """
     print(f"❌ WORKER FAILED: {worker_name}")
     print(f"   Reason: {reason[:100]}...")
-    print(f"   Failed workers so far: {failed_paths}")
-    
-    return {
-        "failed_paths": failed_paths
-    }
+    print(f"   Delegation path: {' -> '.join(state.get('delegation_path', []))}")
 
 def evaluate_worker_output(task: str, output: str, llm) -> dict:
     """Judge Agent - Evaluates quality of worker outputs
@@ -950,28 +941,13 @@ RULES:
 # ========================================================================
 
 # === DIRECT WORKERS (attached to root) ===
-def visualization_node(state: State) -> Command[Literal["supervisor"]]:
-    result = visualization_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="visualization")]},
-        goto="supervisor"
-    )
-
-def marketing_node(state: State) -> Command[Literal["supervisor"]]:
-    result = marketing_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="marketing")]},
-        goto="supervisor"
-    )
+# Using factory functions - eliminates duplication!
+visualization_node = create_worker_node("visualization", visualization_agent)
+marketing_node = create_worker_node("marketing", marketing_agent)
 
 
 # === BUILDER TEAM ===
-def dev_tools_node(state: State) -> Command[Literal["supervisor"]]:
-    result = dev_tools_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="dev_tools")]},
-        goto="supervisor"
-    )
+dev_tools_node = create_worker_node("dev_tools", dev_tools_agent)
 
 builder_supervisor = make_supervisor_node(llm, ["dev_tools"], worker_tools={
     "dev_tools": [generate_tool_code]
@@ -985,26 +961,9 @@ builder_team_graph = builder_builder.compile()
 
 
 # === KITCHEN TEAM ===
-def recipe_node(state: State) -> Command[Literal["supervisor"]]:
-    result = recipe_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="recipe")]},
-        goto="supervisor"
-    )
-
-def team_pm_node(state: State) -> Command[Literal["supervisor"]]:
-    result = team_pm_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="team_pm")]},
-        goto="supervisor"
-    )
-
-def dish_ideation_node(state: State) -> Command[Literal["supervisor"]]:
-    result = dish_ideation_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="dish_ideation")]},
-        goto="supervisor"
-    )
+recipe_node = create_worker_node("recipe", recipe_agent)
+team_pm_node = create_worker_node("team_pm", team_pm_agent)
+dish_ideation_node = create_worker_node("dish_ideation", dish_ideation_agent)
 
 kitchen_supervisor = make_supervisor_node(llm, ["recipe", "team_pm", "dish_ideation"], worker_tools={
     "recipe": [search_recipes, get_recipe_details],
@@ -1022,26 +981,9 @@ kitchen_team_graph = kitchen_builder.compile()
 
 
 # === INVENTORY TEAM ===
-def stock_node(state: State) -> Command[Literal["supervisor"]]:
-    result = stock_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="stock")]},
-        goto="supervisor"
-    )
-
-def suppliers_node(state: State) -> Command[Literal["supervisor"]]:
-    result = suppliers_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="suppliers")]},
-        goto="supervisor"
-    )
-
-def analysis_node(state: State) -> Command[Literal["supervisor"]]:
-    result = analysis_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="analysis")]},
-        goto="supervisor"
-    )
+stock_node = create_worker_node("stock", stock_agent)
+suppliers_node = create_worker_node("suppliers", suppliers_agent)
+analysis_node = create_worker_node("analysis", analysis_agent)
 
 inventory_supervisor = make_supervisor_node(llm, ["stock", "suppliers", "analysis"], worker_tools={
     "stock": [check_stock],
@@ -1059,12 +1001,7 @@ inventory_team_graph = inventory_builder.compile()
 
 
 # === SALES TEAM ===
-def profit_node(state: State) -> Command[Literal["supervisor"]]:
-    result = profit_agent.invoke(state)
-    return Command(
-        update={"messages": [HumanMessage(content=result["messages"][-1].content, name="profit")]},
-        goto="supervisor"
-    )
+profit_node = create_worker_node("profit", profit_agent)
 
 sales_supervisor = make_supervisor_node(llm, ["profit"], worker_tools={
     "profit": [calculate_cost]
@@ -1081,26 +1018,10 @@ sales_team_graph = sales_builder.compile()
 # TIER 1: CHEF META-TEAM (combines kitchen, inventory, sales)
 # ========================================================================
 
-def call_kitchen_team(state: State) -> Command[Literal["supervisor"]]:
-    response = kitchen_team_graph.invoke({"messages": state["messages"]})
-    return Command(
-        update={"messages": [HumanMessage(content=response["messages"][-1].content, name="kitchen_team")]},
-        goto="supervisor"
-    )
-
-def call_inventory_team(state: State) -> Command[Literal["supervisor"]]:
-    response = inventory_team_graph.invoke({"messages": state["messages"]})
-    return Command(
-        update={"messages": [HumanMessage(content=response["messages"][-1].content, name="inventory_team")]},
-        goto="supervisor"
-    )
-
-def call_sales_team(state: State) -> Command[Literal["supervisor"]]:
-    response = sales_team_graph.invoke({"messages": state["messages"]})
-    return Command(
-        update={"messages": [HumanMessage(content=response["messages"][-1].content, name="sales_team")]},
-        goto="supervisor"
-    )
+# Now create team callers using factory
+call_kitchen_team = create_team_caller("kitchen_team", kitchen_team_graph)
+call_inventory_team = create_team_caller("inventory_team", inventory_team_graph)
+call_sales_team = create_team_caller("sales_team", sales_team_graph)
 
 # Chef supervisor sees ABSTRACT descriptions (not granular tools)
 # Direct reports are teams, so show capabilities not individual tools
@@ -1218,19 +1139,8 @@ def conversational_responder_node(state: State) -> Command[Literal["supervisor",
             goto="supervisor"
         )
 
-def call_builder_team(state: State) -> Command[Literal["supervisor"]]:
-    response = builder_team_graph.invoke({"messages": state["messages"]})
-    return Command(
-        update={"messages": [HumanMessage(content=response["messages"][-1].content, name="builder_team")]},
-        goto="supervisor"
-    )
-
-def call_chef_team(state: State) -> Command[Literal["supervisor"]]:
-    response = chef_team_graph.invoke({"messages": state["messages"]})
-    return Command(
-        update={"messages": [HumanMessage(content=response["messages"][-1].content, name="chef_team")]},
-        goto="supervisor"
-    )
+call_builder_team = create_team_caller("builder_team", builder_team_graph)
+call_chef_team = create_team_caller("chef_team", chef_team_graph)
 
 # Root supervisor sees VERY ABSTRACT descriptions (2+ layers from tools)
 # Only knows general purpose of each top-level team
