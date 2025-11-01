@@ -28,6 +28,7 @@ from typing import List, Optional, Literal
 from typing_extensions import TypedDict
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import create_react_agent
 from langgraph.graph import StateGraph, MessagesState, START, END
@@ -78,11 +79,14 @@ class State(MessagesState):
     delegation_path: list  # Track current delegation path: ["supervisor", "chef_team", "recipe"]
     failed_paths: list  # Track failed delegation paths: [["supervisor", "chef_team"], ...]
     attempts_at_level: dict  # Track attempts per supervisor level: {"supervisor": 2, "chef_team->supervisor": 1}
+    delegation_depth: int  # Track current delegation depth (0 = root, 1 = chef, 2 = kitchen, etc.)
+    max_delegation_depth: int  # Maximum allowed depth (default 4)
 
 
 # ========== CIRCUIT BREAKER - Simple Loop Prevention ==========
 MAX_SAME_WORKER_ATTEMPTS = 2  # Don't retry same worker more than 2x
 MAX_TOTAL_ATTEMPTS = 3  # Maximum routing attempts before admitting failure
+MAX_DELEGATION_DEPTH = 4  # Maximum hierarchy depth (root=0, chef=1, kitchen=2, worker=3)
 
 def build_tool_table(worker_tools: dict, detail_level: str = "full") -> str:
     """Build tool visibility table with hierarchical abstraction
@@ -131,12 +135,18 @@ def build_tool_table(worker_tools: dict, detail_level: str = "full") -> str:
     return table
 
 def check_circuit_breaker(state: State, worker_name: str) -> tuple[bool, str]:
-    """Simple circuit breaker - just prevent obvious loops
+    """Simple circuit breaker - prevent obvious loops and unbounded delegation
     
     Returns:
         (can_delegate: bool, reason: str)
     """
     attempts_at_level = state.get("attempts_at_level", {})
+    
+    # Check delegation depth (prevent infinite hierarchy)
+    current_depth = state.get("delegation_depth", 0)
+    max_depth = state.get("max_delegation_depth", MAX_DELEGATION_DEPTH)
+    if current_depth >= max_depth:
+        return (False, f"Circuit breaker: Max delegation depth ({max_depth}) reached. Escalating to human.")
     
     # Check total attempts (prevent exhaustive exploration)
     total_attempts = sum(attempts_at_level.values())
@@ -158,12 +168,18 @@ def record_delegation_attempt(state: State, worker_name: str) -> dict:
     attempts_at_level = state.get("attempts_at_level", {}).copy()
     attempts_at_level[worker_name] = attempts_at_level.get(worker_name, 0) + 1
     
+    # Increment delegation depth
+    current_depth = state.get("delegation_depth", 0)
+    new_depth = len(new_path)  # Depth = length of delegation path
+    
     total_attempts = sum(attempts_at_level.values())
-    print(f"📍 DELEGATION #{total_attempts}: {' -> '.join(new_path)}")
+    print(f"📍 DELEGATION #{total_attempts} (depth={new_depth}): {' -> '.join(new_path)}")
     
     return {
         "delegation_path": new_path,
-        "attempts_at_level": attempts_at_level
+        "attempts_at_level": attempts_at_level,
+        "delegation_depth": new_depth,
+        "max_delegation_depth": state.get("max_delegation_depth", MAX_DELEGATION_DEPTH)
     }
 
 def record_delegation_failure(state: State, worker_name: str, reason: str) -> dict:
@@ -184,6 +200,72 @@ def record_delegation_failure(state: State, worker_name: str, reason: str) -> di
     return {
         "failed_paths": failed_paths
     }
+
+def evaluate_worker_output(task: str, output: str, llm) -> dict:
+    """Judge Agent - Evaluates quality of worker outputs
+    
+    Args:
+        task: Original user task/query
+        output: Worker's response
+        llm: Language model for evaluation
+        
+    Returns:
+        {
+            "score": int (1-10),
+            "is_sufficient": bool,
+            "critique": str,
+            "needs_retry": bool
+        }
+    """
+    from pydantic import BaseModel, Field
+    
+    class Evaluation(BaseModel):
+        score: int = Field(description="Quality score from 1-10")
+        is_sufficient: bool = Field(description="True if output fully answers the task")
+        critique: str = Field(description="Specific feedback on what's missing or wrong")
+        needs_retry: bool = Field(description="True if worker should retry with feedback")
+    
+    evaluation_prompt = f"""You are a quality judge for a multi-agent system.
+    
+USER TASK: {task}
+WORKER OUTPUT: {output}
+
+Evaluate the worker's output on:
+1. **Accuracy** - Is the information correct?
+2. **Completeness** - Does it fully answer the user's question?
+3. **Clarity** - Is it well-formatted and easy to understand?
+
+Rate 1-10 (10 = perfect, 1 = completely wrong).
+
+Scoring guidelines:
+- 9-10: Excellent, complete answer
+- 7-8: Good, minor improvements possible
+- 5-6: Acceptable but incomplete
+- 3-4: Poor, significant issues
+- 1-2: Wrong or useless
+
+Mark is_sufficient=True if score >= 7.
+Mark needs_retry=True if score < 7 AND the issue is fixable.
+Provide specific critique for improvement.
+"""
+    
+    try:
+        result = llm.with_structured_output(Evaluation).invoke(evaluation_prompt)
+        return {
+            "score": result.score,
+            "is_sufficient": result.is_sufficient,
+            "critique": result.critique,
+            "needs_retry": result.needs_retry
+        }
+    except Exception as e:
+        # If evaluation fails, assume output is acceptable
+        print(f"⚠️  Evaluation failed: {e}, accepting output")
+        return {
+            "score": 7,
+            "is_sufficient": True,
+            "critique": "Evaluation unavailable",
+            "needs_retry": False
+        }
 
 def record_delegation_success(state: State) -> dict:
     """Record successful delegation - reset counters for this branch"""
@@ -501,10 +583,15 @@ def generate_tool_code(tool_name: str, description: str) -> str:
     """Generate Python tool code"""
     return f"CODE: @tool\\ndef {tool_name}(): pass  # {description}"
 
-# --- Recipe Tools (REAL - from v2) with Optional Fuzzy Matching ---
+# --- Recipe Tools (REAL - from v2) with Optional Fuzzy Matching + Retry Logic ---
 @tool
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=2, max=5),
+    retry=retry_if_exception_type((ConnectionError, TimeoutError))
+)
 def search_recipes(kitchen_name: Optional[str] = None, recipe_name: Optional[str] = None) -> str:
-    """Search for recipes with optional fuzzy matching support"""
+    """Search for recipes with optional fuzzy matching support + automatic retry on connection errors"""
     try:
         if recipe_name:
             # Try fuzzy matching IF rapidfuzz is available
@@ -560,8 +647,13 @@ def search_recipes(kitchen_name: Optional[str] = None, recipe_name: Optional[str
         return error_msg  # Return error as string so agent can see it, but it will show in traces
 
 @tool
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_exponential(multiplier=1, min=2, max=5),
+    retry=retry_if_exception_type((ConnectionError, TimeoutError))
+)
 def get_recipe_details(recipe_name: str, kitchen_name: Optional[str] = None) -> str:
-    """Get recipe details with optional fuzzy matching fallback"""
+    """Get recipe details with optional fuzzy matching fallback + automatic retry on connection errors"""
     try:
         # Try exact match first
         query = """

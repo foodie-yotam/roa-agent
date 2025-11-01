@@ -4,3 +4,4 @@ langchain-google-genai
 supabase
 neo4j
 rapidfuzz
+tenacity
