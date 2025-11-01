@@ -858,7 +858,9 @@ def dev_tools_node(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-builder_supervisor = make_supervisor_node(llm, ["dev_tools"])
+builder_supervisor = make_supervisor_node(llm, ["dev_tools"], worker_tools={
+    "dev_tools": [generate_tool_code]
+})
 
 builder_builder = StateGraph(State)
 builder_builder.add_node("supervisor", builder_supervisor)
@@ -889,7 +891,11 @@ def dish_ideation_node(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-kitchen_supervisor = make_supervisor_node(llm, ["recipe", "team_pm", "dish_ideation"])
+kitchen_supervisor = make_supervisor_node(llm, ["recipe", "team_pm", "dish_ideation"], worker_tools={
+    "recipe": [search_recipes, get_recipe_details],
+    "team_pm": [get_team_members, assign_task],
+    "dish_ideation": [suggest_dishes]
+})
 
 kitchen_builder = StateGraph(State)
 kitchen_builder.add_node("supervisor", kitchen_supervisor)
@@ -922,7 +928,11 @@ def analysis_node(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-inventory_supervisor = make_supervisor_node(llm, ["stock", "suppliers", "analysis"])
+inventory_supervisor = make_supervisor_node(llm, ["stock", "suppliers", "analysis"], worker_tools={
+    "stock": [check_stock],
+    "suppliers": [list_suppliers],
+    "analysis": [forecast_demand]
+})
 
 inventory_builder = StateGraph(State)
 inventory_builder.add_node("supervisor", inventory_supervisor)
@@ -941,7 +951,9 @@ def profit_node(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-sales_supervisor = make_supervisor_node(llm, ["profit"])
+sales_supervisor = make_supervisor_node(llm, ["profit"], worker_tools={
+    "profit": [calculate_cost]
+})
 
 sales_builder = StateGraph(State)
 sales_builder.add_node("supervisor", sales_supervisor)
@@ -975,7 +987,12 @@ def call_sales_team(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-chef_supervisor = make_supervisor_node(llm, ["kitchen_team", "inventory_team", "sales_team"])
+# Chef supervisor sees ALL tools from subteams
+chef_supervisor = make_supervisor_node(llm, ["kitchen_team", "inventory_team", "sales_team"], worker_tools={
+    "kitchen_team": [search_recipes, get_recipe_details, get_team_members, assign_task, suggest_dishes],
+    "inventory_team": [check_stock, list_suppliers, forecast_demand],
+    "sales_team": [calculate_cost]
+})
 
 chef_builder = StateGraph(State)
 chef_builder.add_node("supervisor", chef_supervisor)
@@ -1099,7 +1116,13 @@ def call_chef_team(state: State) -> Command[Literal["supervisor"]]:
         goto="supervisor"
     )
 
-root_supervisor = make_supervisor_node(llm, ["visualization", "marketing", "builder_team", "chef_team"])
+# Root supervisor sees ALL tools from entire system
+root_supervisor = make_supervisor_node(llm, ["visualization", "marketing", "builder_team", "chef_team"], worker_tools={
+    "visualization": [display_recipes, display_multiplication, display_prediction_graph, display_inventory_alert, display_team_assignment],
+    "marketing": [create_marketing_content],
+    "builder_team": [generate_tool_code],
+    "chef_team": [search_recipes, get_recipe_details, get_team_members, assign_task, suggest_dishes, check_stock, list_suppliers, forecast_demand, calculate_cost]
+})
 
 root_builder = StateGraph(State)
 root_builder.add_node("conversational_responder", conversational_responder_node)
