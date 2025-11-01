@@ -11,6 +11,12 @@ def search_recipes(kitchen_name: Optional[str] = None, recipe_name: Optional[str
     Args:
         kitchen_name: Filter by kitchen name (optional)
         recipe_name: Filter by recipe name (optional)
+    
+    Example Input: kitchen_name="Yotam Kitchen"
+    Example Output: "Found 12 recipes: [{'kitchen': 'Yotam Kitchen', 'recipe': 'Arroz Sushi'}, ...]"
+    
+    Example Input: recipe_name="Arroz Sushi"
+    Example Output: "Found 1 recipes: [{'kitchen': 'Yotam Kitchen', 'recipe': 'Arroz Sushi'}]"
     """
     try:
         if kitchen_name:
@@ -31,6 +37,9 @@ def get_recipe_details(recipe_name: str, kitchen_name: Optional[str] = None) -> 
     Args:
         recipe_name: Name of the recipe
         kitchen_name: Kitchen name (optional)
+    
+    Example Input: recipe_name="Arroz Sushi"
+    Example Output: "Recipe details: {'name': 'Arroz Sushi', 'directions': 'Cook rice...', 'ingredients': [{'name': 'Rice', 'amount': 2, 'unit': 'cups'}, ...]}"
     """
     try:
         query = """
@@ -47,7 +56,10 @@ def get_recipe_details(recipe_name: str, kitchen_name: Optional[str] = None) -> 
 
 @tool
 def get_team_members() -> str:
-    """Get list of team members"""
+    """Get list of team members
+    
+    Example Output: "Team members: Chef, Sous Chef, Line Cook, Prep Cook"
+    """
     return "Team members: Chef, Sous Chef, Line Cook, Prep Cook"
 
 
@@ -58,11 +70,17 @@ def assign_task(task: str, assignee: str) -> str:
     Args:
         task: Task description
         assignee: Team member to assign to
+    
+    Example Input: task="Prep vegetables", assignee="Line Cook"
+    Example Output: "Assigned 'Prep vegetables' to Line Cook"
     """
     return f"Assigned '{task}' to {assignee}"
 
 
 @tool
 def suggest_dishes() -> str:
-    """Suggest new dish ideas"""
+    """Suggest new dish ideas based on current ingredients
+    
+    Example Output: "Suggested dishes: Seasonal pasta, Grilled fish, Farm salad"
+    """
     return "Suggested dishes: Seasonal pasta, Grilled fish, Farm salad"
