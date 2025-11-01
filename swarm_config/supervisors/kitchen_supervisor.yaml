@@ -1,0 +1,29 @@
+name: kitchen_supervisor
+type: supervisor
+team: kitchen_team
+
+description: |
+  Routes kitchen-related requests to specialized workers:
+  recipe, team_pm, or dish_ideation agents.
+
+system_prompt_file: prompts/supervisors/kitchen_supervisor.md
+
+workers:
+  - name: recipe
+    agent_config: agents/recipe_agent.yaml
+    
+  - name: team_pm
+    agent_config: agents/team_pm_agent.yaml
+    
+  - name: dish_ideation
+    agent_config: agents/dish_ideation_agent.yaml
+
+routing_strategy: tool_visibility
+routing_config:
+  max_same_worker_attempts: 2
+  max_total_attempts: 3
+  show_tool_table: true
+  
+evaluator:
+  enabled: false  # Can enable later for quality scoring
+  threshold: 7    # Minimum score to accept (1-10)

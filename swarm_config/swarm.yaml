@@ -1,0 +1,148 @@
+# ROA Swarm Architecture - Declarative Configuration
+# This file defines the entire multi-agent system structure
+
+name: ROA
+version: "2.0"
+description: Restaurant Operations Assistant - Hierarchical Multi-Agent Swarm
+
+metadata:
+  created: "2025-11-01"
+  author: "ROA Team"
+  framework: "langgraph"
+  deployment: "langgraph-cloud"
+
+# Global configuration
+global_config:
+  llm:
+    provider: google
+    model: gemini-2.0-flash-exp
+    temperature: 0.7
+    
+  database:
+    type: neo4j
+    connection_env: NEO4J_URI
+    
+  tracing:
+    enabled: true
+    project: roa-voice-dev
+    
+  circuit_breaker:
+    max_same_worker_attempts: 2
+    max_total_attempts: 3
+
+# Hierarchical Team Structure
+hierarchy:
+  root:
+    type: supervisor
+    config: supervisors/root_supervisor.yaml
+    
+    children:
+      visualization:
+        type: worker
+        config: agents/visualization_agent.yaml
+        
+      marketing:
+        type: worker
+        config: agents/marketing_agent.yaml
+        
+      builder_team:
+        type: supervisor
+        config: supervisors/builder_supervisor.yaml
+        children:
+          dev_tools:
+            type: worker
+            config: agents/dev_tools_agent.yaml
+            
+      chef_team:
+        type: supervisor
+        config: supervisors/chef_supervisor.yaml
+        
+        children:
+          kitchen_team:
+            type: supervisor
+            config: supervisors/kitchen_supervisor.yaml
+            children:
+              recipe:
+                type: worker
+                config: agents/recipe_agent.yaml
+              team_pm:
+                type: worker
+                config: agents/team_pm_agent.yaml
+              dish_ideation:
+                type: worker
+                config: agents/dish_ideation_agent.yaml
+                
+          inventory_team:
+            type: supervisor
+            config: supervisors/inventory_supervisor.yaml
+            children:
+              stock:
+                type: worker
+                config: agents/stock_agent.yaml
+              suppliers:
+                type: worker
+                config: agents/suppliers_agent.yaml
+              analysis:
+                type: worker
+                config: agents/analysis_agent.yaml
+                
+          sales_team:
+            type: supervisor
+            config: supervisors/sales_supervisor.yaml
+            children:
+              profit:
+                type: worker
+                config: agents/profit_agent.yaml
+
+# Tool Registry - Map tool names to implementations
+tools:
+  # Recipe tools
+  search_recipes:
+    module: src.teams.chef.kitchen.tools
+    function: search_recipes
+    
+  get_recipe_details:
+    module: src.teams.chef.kitchen.tools
+    function: get_recipe_details
+    
+  # Team management tools
+  get_team_members:
+    module: src.teams.chef.kitchen.tools
+    function: get_team_members
+    
+  assign_task:
+    module: src.teams.chef.kitchen.tools
+    function: assign_task
+    
+  # Dish tools
+  suggest_dishes:
+    module: src.teams.chef.kitchen.tools
+    function: suggest_dishes
+    
+  # Visualization tools
+  display_recipes:
+    module: agent
+    function: display_recipes
+    
+  display_multiplication:
+    module: agent
+    function: display_multiplication
+    
+  # Add more tools as needed...
+
+# Prompt Templates Directory
+prompts_directory: swarm_config/prompts/
+
+# Evaluation Configuration (for future use)
+evaluation:
+  enabled: false
+  evaluators:
+    quality_scorer:
+      type: llm_as_judge
+      prompt_file: prompts/evaluators/quality_scorer.md
+      threshold: 7
+      
+    task_completion:
+      type: llm_as_judge
+      prompt_file: prompts/evaluators/task_completion.md
+      threshold: 8

@@ -1,0 +1,39 @@
+name: recipe_agent
+type: worker
+team: kitchen_team
+
+description: |
+  Recipe database specialist with access to Neo4j.
+  Searches and retrieves recipe information.
+
+system_prompt_file: prompts/agents/recipe_agent.md
+
+tools:
+  - search_recipes
+  - get_recipe_details
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000
+  output_type: str
+  retry_attempts: 2
+  
+capabilities:
+  - Search recipes by name or kitchen
+  - Get detailed recipe with ingredients
+  - Handle typos in recipe names
+  
+limitations:
+  - Cannot list all kitchens (no list_kitchens tool)
+  - Cannot modify recipes
+  - Cannot create new recipes
+  
+examples:
+  - input: "get Arroz Sushi recipe"
+    expected_tool: get_recipe_details
+    expected_output: "Recipe with ingredients and directions"
+  
+  - input: "find pasta recipes"
+    expected_tool: search_recipes
+    expected_output: "List of pasta recipes"
