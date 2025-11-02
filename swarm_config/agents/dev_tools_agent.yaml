@@ -1,0 +1,16 @@
+name: dev_tools_agent
+type: worker
+
+description: |
+  Developer tool assistant.
+  Generates Python code for tools and scripts.
+
+system_prompt_file: prompts/agents/dev_tools_agent.md
+
+tools:
+  - generate_tool_code
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

@@ -1,0 +1,17 @@
+name: dish_ideation_agent
+type: worker
+team: kitchen_team
+
+description: |
+  Dish ideation specialist.
+  Suggests dish ideas based on ingredients.
+
+system_prompt_file: prompts/agents/dish_ideation_agent.md
+
+tools:
+  - suggest_dishes
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

@@ -1,0 +1,19 @@
+name: chef_supervisor
+type: supervisor
+
+description: |
+  Chef meta-team supervisor that coordinates kitchen, inventory, and sales teams.
+
+system_prompt_file: prompts/supervisors/chef_supervisor.md
+
+workers:
+  - name: kitchen_team
+    agent_config: supervisors/kitchen_supervisor.yaml
+  - name: inventory_team
+    agent_config: supervisors/inventory_supervisor.yaml
+  - name: sales_team
+    agent_config: supervisors/sales_supervisor.yaml
+
+routing_config:
+  show_tool_table: true
+  allow_retry: true

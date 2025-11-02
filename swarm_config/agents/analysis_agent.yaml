@@ -1,0 +1,17 @@
+name: analysis_agent
+type: worker
+team: inventory_team
+
+description: |
+  Demand forecasting specialist.
+  Forecasts demand for items.
+
+system_prompt_file: prompts/agents/analysis_agent.md
+
+tools:
+  - forecast_demand
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

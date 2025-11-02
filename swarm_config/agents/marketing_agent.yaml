@@ -1,0 +1,16 @@
+name: marketing_agent
+type: worker
+
+description: |
+  Marketing content creator for culinary products.
+  Generates marketing copy and promotional content.
+
+system_prompt_file: prompts/agents/marketing_agent.md
+
+tools:
+  - create_marketing_content
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

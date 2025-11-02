@@ -1,0 +1,18 @@
+name: team_pm_agent
+type: worker
+team: kitchen_team
+
+description: |
+  Team project manager specialist.
+  Manages team members and task assignments.
+
+system_prompt_file: prompts/agents/team_pm_agent.md
+
+tools:
+  - get_team_members
+  - assign_task
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

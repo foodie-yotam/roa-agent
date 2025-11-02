@@ -1,0 +1,20 @@
+name: visualization_agent
+type: worker
+
+description: |
+  Visualization specialist for kitchen operations.
+  Creates visual displays when users need to see data graphically.
+
+system_prompt_file: prompts/agents/visualization_agent.md
+
+tools:
+  - display_recipes
+  - display_multiplication
+  - display_prediction_graph
+  - display_inventory_alert
+  - display_team_assignment
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

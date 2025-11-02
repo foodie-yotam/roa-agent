@@ -13,11 +13,24 @@ from importlib import import_module
 from functools import partial
 
 from langchain_core.messages import HumanMessage
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import StateGraph, MessagesState, START, END
 from langgraph.types import Command
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.prebuilt import create_react_agent
+import os
 
-from agent import State, build_tool_table, make_supervisor_node
+# Import factory functions
+from utils.node_factory import create_worker_node, create_team_caller
+
+
+# State definition (same as in agent.py)
+class State(MessagesState):
+    """State shared across all hierarchical levels"""
+    next: str
+    routing_recommendations: str
+    delegation_path: list
+    attempts_at_level: dict
+    delegation_depth: int
 
 
 class SwarmLoader:
@@ -47,7 +60,8 @@ class SwarmLoader:
         
     def load_prompt(self, prompt_file: str) -> str:
         """Load prompt from markdown file"""
-        prompt_path = self.base_dir / self.config['prompts_directory'] / prompt_file
+        # prompt_file already includes 'prompts/' prefix, base_dir is 'swarm_config'
+        prompt_path = self.base_dir / prompt_file
         
         if not prompt_path.exists():
             print(f"⚠️  Prompt file not found: {prompt_path}, using default")
@@ -81,16 +95,19 @@ class SwarmLoader:
     
     def build_worker_agent(self, agent_config: Dict[str, Any]):
         """Build a worker agent from config"""
-        from langchain.agents import create_react_agent
-        
-        # Load system prompt
-        prompt = self.load_prompt(agent_config['system_prompt_file'])
+        # Load system prompt from markdown file
+        prompt_text = self.load_prompt(agent_config['system_prompt_file'])
         
         # Load tools
         tools = [self.load_tool(tool_name) for tool_name in agent_config['tools']]
         
-        # Create agent
-        agent = create_react_agent(self.llm, tools, prompt=prompt)
+        # Create agent with prompt from file!
+        # LangGraph's create_react_agent accepts prompt= parameter
+        agent = create_react_agent(
+            self.llm, 
+            tools, 
+            prompt=prompt_text  # ← Prompt loaded from .md file!
+        )
         
         return agent, tools
     
@@ -114,6 +131,9 @@ class SwarmLoader:
         routing_config = supervisor_config.get('routing_config', {})
         
         # Build supervisor node with tool visibility
+        # Import here to avoid circular dependency
+        from agent import make_supervisor_node
+        
         supervisor_node = make_supervisor_node(
             self.llm,
             worker_names,
@@ -146,16 +166,9 @@ class SwarmLoader:
                 child_agent = self.build_team_graph(child_name, child_config)
                 
                 # Create node wrapper
-                def make_node(name, agent):
-                    def node_func(state: State) -> Command:
-                        result = agent.invoke(state)
-                        return Command(
-                            update={"messages": [HumanMessage(content=result["messages"][-1].content, name=name)]},
-                            goto="supervisor"
-                        )
-                    return node_func
-                
-                builder.add_node(child_name, make_node(child_name, child_agent))
+                # Use factory function for node creation
+                node_func = create_worker_node(child_name, child_agent)
+                builder.add_node(child_name, node_func)
             
             builder.add_edge(START, "supervisor")
             return builder.compile()

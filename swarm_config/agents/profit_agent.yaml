@@ -1,0 +1,17 @@
+name: profit_agent
+type: worker
+team: sales_team
+
+description: |
+  Profitability analyst.
+  Calculates costs and analyzes profit margins.
+
+system_prompt_file: prompts/agents/profit_agent.md
+
+tools:
+  - calculate_cost
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

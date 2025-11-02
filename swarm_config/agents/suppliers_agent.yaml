@@ -1,0 +1,17 @@
+name: suppliers_agent
+type: worker
+team: inventory_team
+
+description: |
+  Supplier management specialist.
+  Manages suppliers and their information.
+
+system_prompt_file: prompts/agents/suppliers_agent.md
+
+tools:
+  - list_suppliers
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

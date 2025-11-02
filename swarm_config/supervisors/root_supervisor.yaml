@@ -1,0 +1,23 @@
+name: root_supervisor
+type: supervisor
+
+description: |
+  Root supervisor that coordinates all top-level teams.
+  Handles visualization, marketing, builder, and chef teams.
+
+system_prompt_file: prompts/supervisors/root_supervisor.md
+
+workers:
+  - name: visualization
+    agent_config: agents/visualization_agent.yaml
+  - name: marketing
+    agent_config: agents/marketing_agent.yaml
+  - name: builder_team
+    agent_config: supervisors/builder_supervisor.yaml
+  - name: chef_team
+    agent_config: supervisors/chef_supervisor.yaml
+
+routing_config:
+  show_tool_table: true
+  allow_retry: true
+  max_retries: 2

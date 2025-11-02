@@ -1,0 +1,17 @@
+name: stock_agent
+type: worker
+team: inventory_team
+
+description: |
+  Inventory management specialist.
+  Checks stock levels and manages inventory.
+
+system_prompt_file: prompts/agents/stock_agent.md
+
+tools:
+  - check_stock
+
+config:
+  max_loops: 3
+  verbose: true
+  context_length: 100000

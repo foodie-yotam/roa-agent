@@ -98,26 +98,44 @@ hierarchy:
 tools:
   # Recipe tools
   search_recipes:
-    module: src.teams.chef.kitchen.tools
+    module: agent
     function: search_recipes
     
   get_recipe_details:
-    module: src.teams.chef.kitchen.tools
+    module: agent
     function: get_recipe_details
     
   # Team management tools
   get_team_members:
-    module: src.teams.chef.kitchen.tools
+    module: agent
     function: get_team_members
     
   assign_task:
-    module: src.teams.chef.kitchen.tools
+    module: agent
     function: assign_task
     
   # Dish tools
   suggest_dishes:
-    module: src.teams.chef.kitchen.tools
+    module: agent
     function: suggest_dishes
+  
+  # Inventory tools
+  check_stock:
+    module: agent
+    function: check_stock
+  
+  list_suppliers:
+    module: agent
+    function: list_suppliers
+    
+  forecast_demand:
+    module: agent
+    function: forecast_demand
+  
+  # Sales tools
+  calculate_cost:
+    module: agent
+    function: calculate_cost
     
   # Visualization tools
   display_recipes:
@@ -127,11 +145,31 @@ tools:
   display_multiplication:
     module: agent
     function: display_multiplication
-    
-  # Add more tools as needed...
+  
+  display_prediction_graph:
+    module: agent
+    function: display_prediction_graph
+  
+  display_inventory_alert:
+    module: agent
+    function: display_inventory_alert
+  
+  display_team_assignment:
+    module: agent
+    function: display_team_assignment
+  
+  # Marketing tools
+  create_marketing_content:
+    module: agent
+    function: create_marketing_content
+  
+  # Builder tools
+  generate_tool_code:
+    module: agent
+    function: generate_tool_code
 
 # Prompt Templates Directory
-prompts_directory: swarm_config/prompts/
+prompts_directory: prompts/
 
 # Evaluation Configuration (for future use)
 evaluation:
